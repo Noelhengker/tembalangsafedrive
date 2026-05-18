@@ -57,7 +57,7 @@ st.markdown("---")
 # 5. KONTEN HALAMAN
 # ==========================================
 if st.session_state.halaman == 'Home':
-    st_autorefresh(interval=5000, key="datarefresh")
+    st_autorefresh(interval=2000, key="datarefresh")
 
     st.markdown("**Status GPS Anda:**")
     location = streamlit_geolocation()
