@@ -4,7 +4,6 @@ import folium
 import os
 import requests
 from PIL import Image
-from PIL.ExifTags import TAGS, GPSTAGS
 from streamlit_folium import st_folium
 from streamlit_geolocation import streamlit_geolocation
 from geopy.distance import geodesic
@@ -30,22 +29,15 @@ st.markdown(hide_st_style, unsafe_allow_html=True)
 FILE_CSV = 'hasil_survei_tembalang.csv'
 
 # ==========================================
-# FUNGSI PEMBONGKAR EXIF FOTO
+# 🚀 FUNGSI EXIF MODERN (LEBIH AKURAT)
 # ==========================================
 def get_exif_location(img):
     try:
-        exif = img._getexif()
-        if not exif: return None, None
+        exif = img.getexif()
+        # 34853 adalah tag internasional untuk direktori GPSInfo
+        gps_info = exif.get_ifd(34853)
         
-        geotagging = {}
-        for (idx, tag) in TAGS.items():
-            if tag == 'GPSInfo':
-                if idx not in exif: return None, None
-                for (key, val) in GPSTAGS.items():
-                    if key in exif[idx]:
-                        geotagging[val] = exif[idx][key]
-        
-        if 'GPSLatitude' not in geotagging or 'GPSLongitude' not in geotagging:
+        if not gps_info:
             return None, None
 
         def convert_to_degrees(value):
@@ -54,14 +46,15 @@ def get_exif_location(img):
             s = float(value[2])
             return d + (m / 60.0) + (s / 3600.0)
 
-        lat = convert_to_degrees(geotagging['GPSLatitude'])
-        if geotagging['GPSLatitudeRef'] != 'N': lat = -lat
+        # Di direktori GPS: Tag 2 = Lat, Tag 1 = LatRef (N/S), Tag 4 = Lon, Tag 3 = LonRef (E/W)
+        lat = convert_to_degrees(gps_info[2])
+        if gps_info[1] != 'N': lat = -lat
         
-        lon = convert_to_degrees(geotagging['GPSLongitude'])
-        if geotagging['GPSLongitudeRef'] != 'E': lon = -lon
+        lon = convert_to_degrees(gps_info[4])
+        if gps_info[3] != 'E': lon = -lon
         
         return lat, lon
-    except:
+    except Exception as e:
         return None, None
 
 # 2. BACA DATA CSV
@@ -106,12 +99,11 @@ else:
 st.markdown("---")
 
 # ==========================================
-# 📡 SENSOR GPS GLOBAL (Dipindah ke atas agar stabil!)
+# 📡 SENSOR GPS GLOBAL 
 # ==========================================
 user_lat = None
 user_lon = None
 
-# GPS hanya ditampilkan untuk pengguna biasa, disembunyikan di halaman Login/Admin agar rapi
 if st.session_state.halaman in ['Home', 'Rute', 'Lapor']:
     col_teks, col_gps = st.columns([1, 2])
     col_teks.markdown("**📡 Sensor GPS Anda:**")
@@ -257,9 +249,9 @@ elif st.session_state.halaman == 'Lapor':
     st.subheader("📣 Laporkan Titik Rawan Baru")
     st.info("Punya foto kejadian? Upload di sini, sistem akan otomatis mendeteksi koordinat lokasinya!")
     
-    foto_upload = st.file_uploader("Upload Foto Lokasi Kejadian (Opsional)", type=['jpg', 'jpeg'])
+    foto_upload = st.file_uploader("Upload Foto Lokasi Kejadian", type=['jpg', 'jpeg'])
     
-    # Gunakan koordinat GPS global jika ada, jika tidak pakai koordinat default
+    # Titik default mengikuti GPS Global, kalau mati pakai titik stasioner (Tembalang)
     default_lat = user_lat if user_lat else -7.049000
     default_lon = user_lon if user_lon else 110.441000
 
@@ -271,16 +263,19 @@ elif st.session_state.halaman == 'Lapor':
             if exif_lat and exif_lon:
                 default_lat = exif_lat
                 default_lon = exif_lon
-                st.success(f"✅ Koordinat berhasil ditemukan dari foto! (Lat: {exif_lat:.5f}, Lon: {exif_lon:.5f})")
+                st.success(f"✅ Koordinat berhasil ditarik dari foto! (Lat: {exif_lat:.5f}, Lon: {exif_lon:.5f})")
             else:
-                st.warning("⚠️ Foto ini tidak mengandung data GPS. Menggunakan titik GPS Anda saat ini.")
+                st.warning("⚠️ Gagal menemukan data GPS dari foto. Pastikan foto diambil langsung dari kamera HP dengan fitur lokasi menyala.")
         except Exception as e:
-            st.error("Terjadi kesalahan saat membaca foto.")
+            st.error("Terjadi kesalahan saat membedah foto.")
 
     with st.form("form_tambah"):
         new_lok = st.text_input("Nama Lokasi (Contoh: Jalan Menurun Sigar Bencah)")
-        new_lat = st.number_input("Latitude", format="%.6f", value=default_lat, step=0.000100)
-        new_lon = st.number_input("Longitude", format="%.6f", value=default_lon, step=0.000100)
+        
+        # Angka di bawah ini akan otomatis berubah sesuai data foto / GPS global di atas!
+        new_lat = st.number_input("Latitude", format="%.6f", value=float(default_lat), step=0.000100)
+        new_lon = st.number_input("Longitude", format="%.6f", value=float(default_lon), step=0.000100)
+        
         new_pesan = st.text_input("Pesan Peringatan (Contoh: Jalanan berlubang cukup dalam di sisi kiri)")
         submit_tambah = st.form_submit_button("Kirim Laporan")
 
