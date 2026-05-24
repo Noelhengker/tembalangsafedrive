@@ -27,7 +27,6 @@ st.markdown(hide_st_style, unsafe_allow_html=True)
 
 FILE_CSV = 'hasil_survei_tembalang.csv'
 
-# 2. BACA DATA CSV
 def load_csv():
     if os.path.exists(FILE_CSV):
         return pd.read_csv(FILE_CSV)
@@ -37,14 +36,13 @@ def load_csv():
 df_bahaya = load_csv()
 
 # ==========================================
-# INISIALISASI OTAK MEMORI (Mencegah Amnesia)
+# INISIALISASI OTAK MEMORI
 # ==========================================
 if 'halaman' not in st.session_state:
     st.session_state.halaman = 'Home'
 if 'rute_data' not in st.session_state:
-    st.session_state.rute_data = None # Memori untuk menyimpan hasil pencarian rute
+    st.session_state.rute_data = None 
 
-# 3. HEADER APLIKASI
 st.markdown("<h3 style='text-align: center; color: #E74C3C; margin-bottom: 10px;'>🛡️ Safe-Drive</h3>", unsafe_allow_html=True)
 
 # 4. MENU NAVIGASI 
@@ -57,10 +55,10 @@ if col4.button("⚙️ Set", use_container_width=True): st.session_state.halaman
 st.markdown("---")
 
 # ==========================================
-# 5. KONTEN HALAMAN
+# 5. KONTEN HALAMAN HOME
 # ==========================================
 if st.session_state.halaman == 'Home':
-    st_autorefresh(interval=2000, key="datarefresh") 
+    st_autorefresh(interval=2000, key="home_refresh") 
     
     st.markdown("**Status GPS Anda:**")
     location = streamlit_geolocation()
@@ -100,98 +98,114 @@ if st.session_state.halaman == 'Home':
     for _, p in df_bahaya.iterrows():
         folium.Marker([p['lat'], p['lon']], popup=p['lokasi'], tooltip=p['pesan'], icon=folium.Icon(color='red', icon='exclamation-triangle', prefix='fa')).add_to(m)
     
-    # Tambahan paramater agar map tidak me-refresh halaman saat diklik
     st_folium(m, width=700, height=450, returned_objects=[])
 
 # ==========================================
-# HALAMAN RUTE (Memori Diperkuat)
+# HALAMAN RUTE (LIVE TRACKING NAVIGASI)
 # ==========================================
 elif st.session_state.halaman == 'Rute':
-    st.subheader("📍 Cek Keamanan Rute")
-    st.info("Ketik lokasi tujuan untuk melihat apakah jalur yang akan dilewati aman dari titik rawan.")
+    st.subheader("📍 Navigasi Rute")
+    
+    # CEK STATUS: Apakah memori rute sudah ada isinya?
+    sedang_navigasi = st.session_state.rute_data is not None
+
+    # JIKA SEDANG NAVIGASI, NYALAKAN AUTO-REFRESH 2 DETIK!
+    if sedang_navigasi:
+        st_autorefresh(interval=2000, key="rute_refresh")
     
     location = streamlit_geolocation()
     user_lat = location.get('latitude')
     user_lon = location.get('longitude')
 
-    with st.form("form_cek_rute"):
-        tujuan = st.text_input("Mau ke mana? (Contoh: UNDIP Tembalang)")
-        submit_rute = st.form_submit_button("Cari Rute & Analisis")
+    # TAMPILKAN FORM PENCARIAN HANYA JIKA BELUM NAVIGASI
+    if not sedang_navigasi:
+        st.info("Ketik lokasi tujuan untuk memulai navigasi.")
+        with st.form("form_cek_rute"):
+            tujuan = st.text_input("Mau ke mana? (Contoh: UNDIP Tembalang)")
+            submit_rute = st.form_submit_button("Cari Rute & Mulai Jalan")
 
-    # 1. JIKA TOMBOL DIKLIK, KITA CARI DATANYA DAN SIMPAN KE MEMORI
-    if submit_rute and tujuan:
-        if not user_lat or not user_lon:
-            st.error("GPS belum terkunci. Tunggu sebentar lalu coba lagi.")
-        else:
-            geolocator = ArcGIS() 
-            with st.spinner("Menganalisis keamanan jalur..."):
-                try:
-                    lokasi_tujuan = geolocator.geocode(f"{tujuan}, Indonesia")
-                    if lokasi_tujuan:
-                        dest_lat = lokasi_tujuan.latitude
-                        dest_lon = lokasi_tujuan.longitude
+        if submit_rute and tujuan:
+            if not user_lat or not user_lon:
+                st.error("GPS belum terkunci. Tunggu sebentar lalu coba lagi.")
+            else:
+                geolocator = ArcGIS() 
+                with st.spinner("Menyiapkan rute navigasi..."):
+                    try:
+                        lokasi_tujuan = geolocator.geocode(f"{tujuan}, Indonesia")
+                        if lokasi_tujuan:
+                            dest_lat = lokasi_tujuan.latitude
+                            dest_lon = lokasi_tujuan.longitude
 
-                        url = f"http://router.project-osrm.org/route/v1/driving/{user_lon},{user_lat};{dest_lon},{dest_lat}?overview=full&geometries=geojson"
-                        res = requests.get(url)
-                        data = res.json()
+                            url = f"http://router.project-osrm.org/route/v1/driving/{user_lon},{user_lat};{dest_lon},{dest_lat}?overview=full&geometries=geojson"
+                            res = requests.get(url)
+                            data = res.json()
 
-                        if data.get("code") == "Ok":
-                            route_coords = data["routes"][0]["geometry"]["coordinates"]
-                            
-                            bahaya_dilewati = []
-                            for _, p in df_bahaya.iterrows():
-                                for coord in route_coords:
-                                    jarak = geodesic((p['lat'], p['lon']), (coord[1], coord[0])).meters
-                                    if jarak < 200:
-                                        bahaya_dilewati.append(p.to_dict()) # Diubah ke kamus agar bisa disimpan
-                                        break 
+                            if data.get("code") == "Ok":
+                                route_coords = data["routes"][0]["geometry"]["coordinates"]
+                                
+                                bahaya_dilewati = []
+                                for _, p in df_bahaya.iterrows():
+                                    for coord in route_coords:
+                                        jarak = geodesic((p['lat'], p['lon']), (coord[1], coord[0])).meters
+                                        if jarak < 200:
+                                            bahaya_dilewati.append(p.to_dict()) 
+                                            break 
 
-                            # SIMPAN SEMUA HASIL KERAS KE DALAM MEMORI OTAK
-                            st.session_state.rute_data = {
-                                'nama_tujuan': lokasi_tujuan.address,
-                                'dest_lat': dest_lat,
-                                'dest_lon': dest_lon,
-                                'user_lat': user_lat,
-                                'user_lon': user_lon,
-                                'geojson': data["routes"][0]["geometry"],
-                                'bahaya': bahaya_dilewati
-                            }
+                                st.session_state.rute_data = {
+                                    'nama_tujuan': lokasi_tujuan.address,
+                                    'dest_lat': dest_lat,
+                                    'dest_lon': dest_lon,
+                                    'geojson': data["routes"][0]["geometry"],
+                                    'bahaya': bahaya_dilewati
+                                }
+                                st.rerun() # Refresh halaman untuk masuk ke mode navigasi
+                            else:
+                                st.error("Server rute gagal mencari jalan.")
                         else:
-                            st.error("Server rute sedang sibuk atau gagal mencari jalan.")
-                    else:
-                        st.error("Lokasi tidak ditemukan. Coba ketik nama tempat yang lebih umum.")
-                except Exception as e:
-                    st.error(f"Terjadi kesalahan saat memproses rute.")
+                            st.error("Lokasi tidak ditemukan.")
+                    except Exception as e:
+                        st.error("Terjadi kesalahan sistem.")
 
-    # 2. MENGGAMBAR PETA BERDASARKAN MEMORI (Aman dari scroll & zoom)
-    if st.session_state.rute_data:
+    # TAMPILAN PETA LIVE SAAT NAVIGASI AKTIF
+    if sedang_navigasi:
         rd = st.session_state.rute_data
-        st.success(f"Tujuan Ditemukan: {rd['nama_tujuan']}")
         
-        m_rute = folium.Map(location=[rd['user_lat'], rd['user_lon']], zoom_start=14)
+        col_info, col_btn = st.columns([3, 1])
+        col_info.success(f"Menuju: {rd['nama_tujuan']}")
+        if col_btn.button("🛑 Selesai"):
+            st.session_state.rute_data = None
+            st.rerun()
+
+        # Peta di-center ke posisi motor TERBARU
+        map_center_lat = user_lat if user_lat else rd.get('dest_lat', -7.049)
+        map_center_lon = user_lon if user_lon else rd.get('dest_lon', 110.441)
+        
+        m_rute = folium.Map(location=[map_center_lat, map_center_lon], zoom_start=16) # Zoom lebih dekat ala Google Maps
         
         if rd['bahaya']:
             warna_rute = '#E74C3C' 
-            st.error(f"⚠️ PERINGATAN! Rute ini akan melewati {len(rd['bahaya'])} titik rawan.")
-            for b in rd['bahaya']:
-                st.warning(f"🚨 Area {b['lokasi']}: {b['pesan']}")
+            st.error(f"⚠️ PERINGATAN! Rute ini melewati {len(rd['bahaya'])} titik rawan.")
         else:
             warna_rute = '#2ECC71' 
-            st.success(f"✅ RUTE AMAN! Jalur menuju tujuanmu bebas dari titik rawan yang terdata.")
 
+        # Gambar garis rute
         folium.GeoJson(
             rd['geojson'],
-            name="Hasil Analisis Rute",
-            style_function=lambda x: {'color': warna_rute, 'weight': 6, 'opacity': 0.8}
+            name="Jalur",
+            style_function=lambda x: {'color': warna_rute, 'weight': 7, 'opacity': 0.8}
         ).add_to(m_rute)
 
-        folium.Marker([rd['user_lat'], rd['user_lon']], popup="Mulai", icon=folium.Icon(color='blue', icon='play')).add_to(m_rute)
+        # Gambar posisi tujuan
         folium.Marker([rd['dest_lat'], rd['dest_lon']], popup=rd['nama_tujuan'], icon=folium.Icon(color='green', icon='flag')).add_to(m_rute)
         
+        # Gambar posisi titik rawan
         for b in rd['bahaya']:
             folium.Marker([b['lat'], b['lon']], tooltip=b['pesan'], icon=folium.Icon(color='red', icon='exclamation-triangle')).add_to(m_rute)
 
-        # Parameter returned_objects=[] mematikan interaksi balik ke sistem, anti-hilang!
+        # GAMBAR POSISI MOTOR (AKAN BERGERAK KARENA AUTO-REFRESH)
+        if user_lat and user_lon:
+            folium.Marker([user_lat, user_lon], popup="Posisi Motor", icon=folium.Icon(color='blue', icon='motorcycle', prefix='fa')).add_to(m_rute)
+
         st_folium(m_rute, width=700, height=450, returned_objects=[])
 
 elif st.session_state.halaman == 'Data':
