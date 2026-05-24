@@ -35,11 +35,9 @@ def load_csv():
 
 df_bahaya = load_csv()
 
-# INISIALISASI OTAK NAVIGASI & JEJAK MOTOR
+# INISIALISASI OTAK NAVIGASI
 if 'halaman' not in st.session_state:
     st.session_state.halaman = 'Home'
-if 'jejak_motor' not in st.session_state:
-    st.session_state.jejak_motor = [] # Array untuk menyimpan riwayat perjalanan
 
 # 3. HEADER APLIKASI
 st.markdown("<h3 style='text-align: center; color: #E74C3C; margin-bottom: 10px;'>🛡️ Safe-Drive</h3>", unsafe_allow_html=True)
@@ -66,66 +64,57 @@ if st.session_state.halaman == 'Home':
     user_lat = location.get('latitude')
     user_lon = location.get('longitude')
 
-    # Catat jejak pergerakan motor jika GPS aktif
-    if user_lat and user_lon:
-        posisi_sekarang = [user_lat, user_lon]
-        # Hanya rekam jika motor bergerak (koordinat berubah)
-        if not st.session_state.jejak_motor or st.session_state.jejak_motor[-1] != posisi_sekarang:
-            st.session_state.jejak_motor.append(posisi_sekarang)
+    m = folium.Map(location=[-7.049, 110.441], zoom_start=15)
 
+    if user_lat and user_lon:
         st.success(f"Sinyal Terkunci: {user_lat:.5f}, {user_lon:.5f}")
-        for _, point in df_bahaya.iterrows():
-            jarak = geodesic((user_lat, user_lon), (point['lat'], point['lon'])).meters
-            if jarak < 200:
-                st.error(f"⚠️ BAHAYA: Anda mendekati {point['lokasi']}!")
-                st.warning(f"Instruksi: {point['pesan']}")
+        
+        if not df_bahaya.empty:
+            # 1. HITUNG JARAK KE SEMUA TITIK UNTUK MENCARI YANG TERDEKAT
+            df_bahaya['jarak'] = df_bahaya.apply(lambda row: geodesic((user_lat, user_lon), (row['lat'], row['lon'])).meters, axis=1)
+            titik_terdekat = df_bahaya.loc[df_bahaya['jarak'].idxmin()]
+            jarak_terdekat = titik_terdekat['jarak']
+            
+            # 2. SISTEM PERINGATAN (Hanya untuk titik terdekat)
+            if jarak_terdekat < 200:
+                st.error(f"⚠️ BAHAYA: Anda mendekati {titik_terdekat['lokasi']} (Sisa {int(jarak_terdekat)} meter)!")
+                st.warning(f"Instruksi: {titik_terdekat['pesan']}")
                 st.components.v1.html(
                     """<script>var audio = new Audio('https://www.soundjay.com/buttons/beep-01a.mp3'); audio.play();</script>""",
                     height=0
                 )
+            else:
+                st.info(f"Titik rawan terdekat: {titik_terdekat['lokasi']} (Berjarak {int(jarak_terdekat)} meter)")
+
+            # 3. NAVIGASI GOOGLE MAPS (Menarik garis dari motor ke titik terdekat)
+            url = f"http://router.project-osrm.org/route/v1/driving/{user_lon},{user_lat};{titik_terdekat['lon']},{titik_terdekat['lat']}?overview=full&geometries=geojson"
+            
+            try:
+                res = requests.get(url)
+                data = res.json()
+                if data.get("code") == "Ok":
+                    route_geojson = data["routes"][0]["geometry"]
+                    folium.GeoJson(
+                        route_geojson,
+                        name="Rute Navigasi",
+                        style_function=lambda x: {'color': '#0078FF', 'weight': 7, 'opacity': 0.8} # Warna biru Google Maps
+                    ).add_to(m)
+                else:
+                    # Kalau server API sedang sibuk, pakai garis lurus putus-putus
+                    folium.PolyLine([[user_lat, user_lon], [titik_terdekat['lat'], titik_terdekat['lon']]], color='#0078FF', weight=5, dash_array='10').add_to(m)
+            except:
+                folium.PolyLine([[user_lat, user_lon], [titik_terdekat['lat'], titik_terdekat['lon']]], color='#0078FF', weight=5, dash_array='10').add_to(m)
+
+        # Marker posisi motor
+        folium.Marker(
+            [user_lat, user_lon], 
+            popup="Posisi Motor", 
+            icon=folium.Icon(color='blue', icon='motorcycle', prefix='fa')
+        ).add_to(m)
     else:
         st.info("Menunggu sinyal GPS... Pastikan izin lokasi aktif.")
 
-    m = folium.Map(location=[-7.049, 110.441], zoom_start=15)
-    
-    # -----------------------------------------------------------
-    # FITUR RUTE CERDAS (Mengikuti kelokan jalan raya pakai OSRM)
-    # -----------------------------------------------------------
-    if len(df_bahaya) > 1:
-        # Format OSRM meminta koordinat lon,lat (terbalik dari folium)
-        coords_str = ";".join([f"{p['lon']},{p['lat']}" for _, p in df_bahaya.iterrows()])
-        url = f"http://router.project-osrm.org/route/v1/driving/{coords_str}?overview=full&geometries=geojson"
-        
-        try:
-            res = requests.get(url)
-            data = res.json()
-            if data.get("code") == "Ok":
-                route_geojson = data["routes"][0]["geometry"]
-                folium.GeoJson(
-                    route_geojson,
-                    name="Jalur Rawan",
-                    style_function=lambda x: {'color': '#3498db', 'weight': 6, 'opacity': 0.7}
-                ).add_to(m)
-            else:
-                # Garis cadangan kalau server OSRM sedang down
-                folium.PolyLine(df_bahaya[['lat', 'lon']].values.tolist(), color='#3498db', weight=6).add_to(m)
-        except:
-            folium.PolyLine(df_bahaya[['lat', 'lon']].values.tolist(), color='#3498db', weight=6).add_to(m)
-            
-    # -----------------------------------------------------------
-    # FITUR JEJAK MOTOR (Garis putus-putus menunjukkan rute yang sudah dilewati)
-    # -----------------------------------------------------------
-    if len(st.session_state.jejak_motor) > 1:
-        folium.PolyLine(
-            st.session_state.jejak_motor,
-            color='#e67e22',       # Warna Oranye
-            weight=5,
-            opacity=0.8,
-            dash_array='10',       # Bikin garis putus-putus
-            tooltip="Jejak Anda"
-        ).add_to(m)
-
-    # Tambah marker titik rawan
+    # Tampilkan semua marker titik bahaya
     for _, p in df_bahaya.iterrows():
         folium.Marker(
             [p['lat'], p['lon']], 
@@ -134,20 +123,16 @@ if st.session_state.halaman == 'Home':
             icon=folium.Icon(color='red', icon='exclamation-triangle', prefix='fa')
         ).add_to(m)
 
-    # Tambah marker motor pengguna
-    if user_lat and user_lon:
-        folium.Marker(
-            [user_lat, user_lon], 
-            popup="Lokasi Anda", 
-            icon=folium.Icon(color='blue', icon='motorcycle', prefix='fa')
-        ).add_to(m)
-
     st_folium(m, width=700, height=450)
 
 elif st.session_state.halaman == 'Data':
     st.subheader("Database Titik Bahaya")
-    st.metric(label="Total Titik Dipantau", value=f"{len(df_bahaya)} Lokasi")
-    st.dataframe(df_bahaya, use_container_width=True)
+    if not df_bahaya.empty:
+        df_tampil = df_bahaya.drop(columns=['jarak'], errors='ignore') # Sembunyikan kolom jarak teknis
+        st.metric(label="Total Titik Dipantau", value=f"{len(df_tampil)} Lokasi")
+        st.dataframe(df_tampil, use_container_width=True)
+    else:
+        st.info("Data masih kosong.")
 
 elif st.session_state.halaman == 'Setting':
     st.subheader("➕ Tambah Titik Baru")
@@ -160,9 +145,11 @@ elif st.session_state.halaman == 'Setting':
 
         if submit_tambah:
             if new_lok and new_pesan:
+                # Pastikan tidak bawa kolom jarak saat nyimpan
+                df_simpan = df_bahaya.drop(columns=['jarak'], errors='ignore') if not df_bahaya.empty else df_bahaya
                 data_baru = pd.DataFrame([{"lokasi": new_lok, "lat": new_lat, "lon": new_lon, "pesan": new_pesan}])
-                df_bahaya = pd.concat([df_bahaya, data_baru], ignore_index=True)
-                df_bahaya.to_csv(FILE_CSV, index=False)
+                df_simpan = pd.concat([df_simpan, data_baru], ignore_index=True)
+                df_simpan.to_csv(FILE_CSV, index=False)
                 st.success(f"Lokasi '{new_lok}' berhasil ditambahkan!")
             else:
                 st.error("Nama Lokasi dan Pesan tidak boleh kosong!")
@@ -176,16 +163,18 @@ elif st.session_state.halaman == 'Setting':
             submit_hapus = st.form_submit_button("Hapus Titik")
 
             if submit_hapus:
-                df_bahaya = df_bahaya[df_bahaya['lokasi'] != pilih_hapus]
-                df_bahaya.to_csv(FILE_CSV, index=False)
+                df_simpan = df_bahaya.drop(columns=['jarak'], errors='ignore')
+                df_simpan = df_simpan[df_simpan['lokasi'] != pilih_hapus]
+                df_simpan.to_csv(FILE_CSV, index=False)
                 st.success(f"Lokasi '{pilih_hapus}' berhasil dihapus!")
     else:
         st.info("Belum ada data titik bahaya.")
         
     st.markdown("---")
     st.subheader("💾 Unduh Data CSV")
-    csv_data = df_bahaya.to_csv(index=False).encode('utf-8')
-    st.download_button(label="⬇️ Download hasil_survei_tembalang.csv", data=csv_data, file_name=FILE_CSV, mime='text/csv')
+    if not df_bahaya.empty:
+        csv_data = df_bahaya.drop(columns=['jarak'], errors='ignore').to_csv(index=False).encode('utf-8')
+        st.download_button(label="⬇️ Download hasil_survei_tembalang.csv", data=csv_data, file_name=FILE_CSV, mime='text/csv')
 
 elif st.session_state.halaman == 'Exit':
     st.error("🔒 Sistem Peringatan Dini Dihentikan.")
