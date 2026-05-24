@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import folium
 import os
+import requests
 from streamlit_folium import st_folium
 from streamlit_geolocation import streamlit_geolocation
 from geopy.distance import geodesic
@@ -34,9 +35,11 @@ def load_csv():
 
 df_bahaya = load_csv()
 
-# INISIALISASI OTAK NAVIGASI
+# INISIALISASI OTAK NAVIGASI & JEJAK MOTOR
 if 'halaman' not in st.session_state:
     st.session_state.halaman = 'Home'
+if 'jejak_motor' not in st.session_state:
+    st.session_state.jejak_motor = [] # Array untuk menyimpan riwayat perjalanan
 
 # 3. HEADER APLIKASI
 st.markdown("<h3 style='text-align: center; color: #E74C3C; margin-bottom: 10px;'>🛡️ Safe-Drive</h3>", unsafe_allow_html=True)
@@ -56,14 +59,20 @@ st.markdown("---")
 # 5. KONTEN HALAMAN
 # ==========================================
 if st.session_state.halaman == 'Home':
-    st_autorefresh(interval=2000, key="datarefresh") # Diatur 2 detik agar responsif!
+    st_autorefresh(interval=2000, key="datarefresh") 
     
     st.markdown("**Status GPS Anda:**")
     location = streamlit_geolocation()
     user_lat = location.get('latitude')
     user_lon = location.get('longitude')
 
+    # Catat jejak pergerakan motor jika GPS aktif
     if user_lat and user_lon:
+        posisi_sekarang = [user_lat, user_lon]
+        # Hanya rekam jika motor bergerak (koordinat berubah)
+        if not st.session_state.jejak_motor or st.session_state.jejak_motor[-1] != posisi_sekarang:
+            st.session_state.jejak_motor.append(posisi_sekarang)
+
         st.success(f"Sinyal Terkunci: {user_lat:.5f}, {user_lon:.5f}")
         for _, point in df_bahaya.iterrows():
             jarak = geodesic((user_lat, user_lon), (point['lat'], point['lon'])).meters
@@ -80,19 +89,43 @@ if st.session_state.halaman == 'Home':
     m = folium.Map(location=[-7.049, 110.441], zoom_start=15)
     
     # -----------------------------------------------------------
-    # FITUR BARU: GARIS RUTE BIRU (MENGHUBUNGKAN TITIK-TITIK)
+    # FITUR RUTE CERDAS (Mengikuti kelokan jalan raya pakai OSRM)
     # -----------------------------------------------------------
     if len(df_bahaya) > 1:
-        route_coords = df_bahaya[['lat', 'lon']].values.tolist()
-        folium.PolyLine(
-            route_coords, 
-            color='#3498db', # Warna biru khas peta digital
-            weight=6,        # Ketebalan garis
-            opacity=0.7,     # Agak transparan agar jalan di bawahnya tetap terlihat
-            tooltip="Jalur Rawan"
-        ).add_to(m)
+        # Format OSRM meminta koordinat lon,lat (terbalik dari folium)
+        coords_str = ";".join([f"{p['lon']},{p['lat']}" for _, p in df_bahaya.iterrows()])
+        url = f"http://router.project-osrm.org/route/v1/driving/{coords_str}?overview=full&geometries=geojson"
+        
+        try:
+            res = requests.get(url)
+            data = res.json()
+            if data.get("code") == "Ok":
+                route_geojson = data["routes"][0]["geometry"]
+                folium.GeoJson(
+                    route_geojson,
+                    name="Jalur Rawan",
+                    style_function=lambda x: {'color': '#3498db', 'weight': 6, 'opacity': 0.7}
+                ).add_to(m)
+            else:
+                # Garis cadangan kalau server OSRM sedang down
+                folium.PolyLine(df_bahaya[['lat', 'lon']].values.tolist(), color='#3498db', weight=6).add_to(m)
+        except:
+            folium.PolyLine(df_bahaya[['lat', 'lon']].values.tolist(), color='#3498db', weight=6).add_to(m)
+            
     # -----------------------------------------------------------
+    # FITUR JEJAK MOTOR (Garis putus-putus menunjukkan rute yang sudah dilewati)
+    # -----------------------------------------------------------
+    if len(st.session_state.jejak_motor) > 1:
+        folium.PolyLine(
+            st.session_state.jejak_motor,
+            color='#e67e22',       # Warna Oranye
+            weight=5,
+            opacity=0.8,
+            dash_array='10',       # Bikin garis putus-putus
+            tooltip="Jejak Anda"
+        ).add_to(m)
 
+    # Tambah marker titik rawan
     for _, p in df_bahaya.iterrows():
         folium.Marker(
             [p['lat'], p['lon']], 
@@ -101,6 +134,7 @@ if st.session_state.halaman == 'Home':
             icon=folium.Icon(color='red', icon='exclamation-triangle', prefix='fa')
         ).add_to(m)
 
+    # Tambah marker motor pengguna
     if user_lat and user_lon:
         folium.Marker(
             [user_lat, user_lon], 
