@@ -88,49 +88,52 @@ if 'rute_data' not in st.session_state:
 if 'role' not in st.session_state:
     st.session_state.role = 'User'
 
-# ==========================================
-# SIDEBAR: PINTU MASUK ADMIN
-# ==========================================
-with st.sidebar:
-    st.markdown("### 🔐 Akses Admin")
-    if st.session_state.role == 'User':
-        pwd = st.text_input("Password", type="password")
-        if st.button("Login"):
-            if pwd == "admin123":
-                st.session_state.role = 'Admin'
-                st.rerun()
-            else:
-                st.error("Password salah!")
-    else:
-        st.success("Halo, Admin!")
-        if st.button("Logout"):
-            st.session_state.role = 'User'
-            st.rerun()
-
 # 3. HEADER APLIKASI
 st.markdown("<h3 style='text-align: center; color: #E74C3C; margin-bottom: 10px;'>🛡️ Safe-Drive</h3>", unsafe_allow_html=True)
 
-if st.session_state.role == 'Admin':
-    col1, col2, col3, col4, col5 = st.columns(5)
-    if col5.button("🛡️ Admin", use_container_width=True): st.session_state.halaman = 'Admin'
-else:
-    col1, col2, col3, col4 = st.columns(4)
+# 4. MENU NAVIGASI (Login pindah ke menu utama 5 kolom)
+col1, col2, col3, col4, col5 = st.columns(5)
 
 if col1.button("🏠 Home", use_container_width=True): st.session_state.halaman = 'Home'
 if col2.button("🗺️ Rute", use_container_width=True): st.session_state.halaman = 'Rute'
 if col3.button("📂 Data", use_container_width=True): st.session_state.halaman = 'Data'
 if col4.button("➕ Lapor", use_container_width=True): st.session_state.halaman = 'Lapor'
 
+# Tombol ke-5 berubah wujud tergantung status login
+if st.session_state.role == 'Admin':
+    if col5.button("🛡️ Admin", use_container_width=True): st.session_state.halaman = 'Admin'
+else:
+    if col5.button("🔐 Login", use_container_width=True): st.session_state.halaman = 'Login'
+
 st.markdown("---")
+
+# ==========================================
+# HALAMAN LOGIN ADMIN
+# ==========================================
+if st.session_state.halaman == 'Login':
+    st.subheader("🔐 Login Admin")
+    st.info("Halaman ini khusus untuk verifikator lapangan.")
+    with st.form("form_login"):
+        pwd = st.text_input("Password", type="password")
+        submit_login = st.form_submit_button("Masuk")
+        
+        if submit_login:
+            if pwd == "admin123":
+                st.session_state.role = 'Admin'
+                st.session_state.halaman = 'Admin' # Otomatis langsung lompat ke halaman Admin
+                st.rerun()
+            else:
+                st.error("Password salah!")
 
 # ==========================================
 # HALAMAN HOME
 # ==========================================
-if st.session_state.halaman == 'Home':
+elif st.session_state.halaman == 'Home':
     st_autorefresh(interval=2000, key="home_refresh") 
     
     st.markdown("**Status GPS Anda:**")
-    location = streamlit_geolocation()
+    # PERBAIKAN: Menambahkan parameter KEY agar tidak hilang
+    location = streamlit_geolocation(key="gps_home")
     user_lat = location.get('latitude')
     user_lon = location.get('longitude')
 
@@ -174,7 +177,8 @@ elif st.session_state.halaman == 'Rute':
 
     if sedang_navigasi: st_autorefresh(interval=2000, key="rute_refresh")
     
-    location = streamlit_geolocation()
+    # PERBAIKAN: Menambahkan parameter KEY agar tidak hilang
+    location = streamlit_geolocation(key="gps_rute")
     user_lat = location.get('latitude')
     user_lon = location.get('longitude')
 
@@ -244,20 +248,17 @@ elif st.session_state.halaman == 'Data':
     else: st.info("Belum ada data titik bahaya yang disetujui.")
 
 # ==========================================
-# HALAMAN LAPOR (DENGAN EKSTRAKSI FOTO)
+# HALAMAN LAPOR 
 # ==========================================
 elif st.session_state.halaman == 'Lapor':
     st.subheader("📣 Laporkan Titik Rawan Baru")
     st.info("Punya foto kejadian? Upload di sini, sistem akan otomatis mendeteksi koordinat lokasinya!")
     
-    # Blok Upload Foto
     foto_upload = st.file_uploader("Upload Foto Lokasi Kejadian (Opsional)", type=['jpg', 'jpeg'])
     
-    # Nilai default koordinat
     default_lat = -7.049000
     default_lon = 110.441000
 
-    # Cek apakah ada foto dan coba bongkar EXIF-nya
     if foto_upload is not None:
         try:
             img = Image.open(foto_upload)
@@ -268,22 +269,21 @@ elif st.session_state.halaman == 'Lapor':
                 default_lon = exif_lon
                 st.success(f"✅ Koordinat berhasil ditemukan dari foto! (Lat: {exif_lat:.5f}, Lon: {exif_lon:.5f})")
             else:
-                st.warning("⚠️ Foto ini tidak mengandung data GPS (Mungkin karena dikirim lewat WhatsApp). Silakan pakai fitur GPS di bawah.")
+                st.warning("⚠️ Foto ini tidak mengandung data GPS. Silakan pakai fitur GPS di bawah.")
         except Exception as e:
             st.error("Terjadi kesalahan saat membaca foto.")
 
     st.markdown("---")
     st.write("**Atau klik tombol ini jika Anda sedang berada di lokasi kejadian:**")
-    loc = streamlit_geolocation()
+    # PERBAIKAN: Menambahkan parameter KEY agar tidak hilang
+    loc = streamlit_geolocation(key="gps_lapor")
     if loc.get('latitude'):
         default_lat = loc.get('latitude')
         default_lon = loc.get('longitude')
         st.success("✅ Koordinat HP Anda berhasil dikunci!")
 
-    # Form Laporan Warga
     with st.form("form_tambah"):
         new_lok = st.text_input("Nama Lokasi (Contoh: Jalan Menurun Sigar Bencah)")
-        # Nilai latitude dan longitude akan otomatis terisi sesuai hasil foto atau GPS di atas
         new_lat = st.number_input("Latitude", format="%.6f", value=default_lat, step=0.000100)
         new_lon = st.number_input("Longitude", format="%.6f", value=default_lon, step=0.000100)
         new_pesan = st.text_input("Pesan Peringatan (Contoh: Jalanan berlubang cukup dalam di sisi kiri)")
@@ -305,8 +305,14 @@ elif st.session_state.halaman == 'Admin':
     if st.session_state.role != 'Admin':
         st.error("Anda tidak memiliki akses ke halaman ini.")
     else:
-        st.subheader("🛡️ Panel Validasi Admin")
-        
+        # Tombol Logout diletakkan di dalam halaman Admin
+        col_judul, col_logout = st.columns([3, 1])
+        col_judul.subheader("🛡️ Panel Validasi Admin")
+        if col_logout.button("🚪 Logout"):
+            st.session_state.role = 'User'
+            st.session_state.halaman = 'Home'
+            st.rerun()
+
         st.markdown("#### ⏳ Laporan Menunggu Persetujuan")
         df_pending = df_bahaya[df_bahaya['status'] == 'pending']
         
