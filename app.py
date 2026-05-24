@@ -91,7 +91,7 @@ if 'role' not in st.session_state:
 # 3. HEADER APLIKASI
 st.markdown("<h3 style='text-align: center; color: #E74C3C; margin-bottom: 10px;'>🛡️ Safe-Drive</h3>", unsafe_allow_html=True)
 
-# 4. MENU NAVIGASI (Login pindah ke menu utama 5 kolom)
+# 4. MENU NAVIGASI
 col1, col2, col3, col4, col5 = st.columns(5)
 
 if col1.button("🏠 Home", use_container_width=True): st.session_state.halaman = 'Home'
@@ -120,7 +120,7 @@ if st.session_state.halaman == 'Login':
         if submit_login:
             if pwd == "admin123":
                 st.session_state.role = 'Admin'
-                st.session_state.halaman = 'Admin' # Otomatis langsung lompat ke halaman Admin
+                st.session_state.halaman = 'Admin'
                 st.rerun()
             else:
                 st.error("Password salah!")
@@ -132,8 +132,8 @@ elif st.session_state.halaman == 'Home':
     st_autorefresh(interval=2000, key="home_refresh") 
     
     st.markdown("**Status GPS Anda:**")
-    # PERBAIKAN: Menambahkan parameter KEY agar tidak hilang
-    location = streamlit_geolocation(key="gps_home")
+    # Murni tanpa parameter key untuk menghindari TypeError
+    location = streamlit_geolocation()
     user_lat = location.get('latitude')
     user_lon = location.get('longitude')
 
@@ -177,8 +177,8 @@ elif st.session_state.halaman == 'Rute':
 
     if sedang_navigasi: st_autorefresh(interval=2000, key="rute_refresh")
     
-    # PERBAIKAN: Menambahkan parameter KEY agar tidak hilang
-    location = streamlit_geolocation(key="gps_rute")
+    # Murni tanpa parameter key
+    location = streamlit_geolocation()
     user_lat = location.get('latitude')
     user_lon = location.get('longitude')
 
@@ -275,8 +275,9 @@ elif st.session_state.halaman == 'Lapor':
 
     st.markdown("---")
     st.write("**Atau klik tombol ini jika Anda sedang berada di lokasi kejadian:**")
-    # PERBAIKAN: Menambahkan parameter KEY agar tidak hilang
-    loc = streamlit_geolocation(key="gps_lapor")
+    
+    # Murni tanpa parameter key
+    loc = streamlit_geolocation()
     if loc.get('latitude'):
         default_lat = loc.get('latitude')
         default_lon = loc.get('longitude')
@@ -305,7 +306,6 @@ elif st.session_state.halaman == 'Admin':
     if st.session_state.role != 'Admin':
         st.error("Anda tidak memiliki akses ke halaman ini.")
     else:
-        # Tombol Logout diletakkan di dalam halaman Admin
         col_judul, col_logout = st.columns([3, 1])
         col_judul.subheader("🛡️ Panel Validasi Admin")
         if col_logout.button("🚪 Logout"):
