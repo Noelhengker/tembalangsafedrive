@@ -93,19 +93,38 @@ st.markdown("<h3 style='text-align: center; color: #E74C3C; margin-bottom: 10px;
 
 # 4. MENU NAVIGASI
 col1, col2, col3, col4, col5 = st.columns(5)
-
 if col1.button("🏠 Home", use_container_width=True): st.session_state.halaman = 'Home'
 if col2.button("🗺️ Rute", use_container_width=True): st.session_state.halaman = 'Rute'
 if col3.button("📂 Data", use_container_width=True): st.session_state.halaman = 'Data'
 if col4.button("➕ Lapor", use_container_width=True): st.session_state.halaman = 'Lapor'
 
-# Tombol ke-5 berubah wujud tergantung status login
 if st.session_state.role == 'Admin':
     if col5.button("🛡️ Admin", use_container_width=True): st.session_state.halaman = 'Admin'
 else:
     if col5.button("🔐 Login", use_container_width=True): st.session_state.halaman = 'Login'
 
 st.markdown("---")
+
+# ==========================================
+# 📡 SENSOR GPS GLOBAL (Dipindah ke atas agar stabil!)
+# ==========================================
+user_lat = None
+user_lon = None
+
+# GPS hanya ditampilkan untuk pengguna biasa, disembunyikan di halaman Login/Admin agar rapi
+if st.session_state.halaman in ['Home', 'Rute', 'Lapor']:
+    col_teks, col_gps = st.columns([1, 2])
+    col_teks.markdown("**📡 Sensor GPS Anda:**")
+    with col_gps:
+        location = streamlit_geolocation()
+        user_lat = location.get('latitude')
+        user_lon = location.get('longitude')
+    
+    if user_lat and user_lon:
+        st.success(f"✅ Sinyal Terkunci (Lat: {user_lat:.5f}, Lon: {user_lon:.5f})")
+    else:
+        st.info("⚠️ Silakan klik ikon target di atas untuk mengaktifkan GPS.")
+    st.markdown("---")
 
 # ==========================================
 # HALAMAN LOGIN ADMIN
@@ -116,7 +135,6 @@ if st.session_state.halaman == 'Login':
     with st.form("form_login"):
         pwd = st.text_input("Password", type="password")
         submit_login = st.form_submit_button("Masuk")
-        
         if submit_login:
             if pwd == "admin123":
                 st.session_state.role = 'Admin'
@@ -130,17 +148,9 @@ if st.session_state.halaman == 'Login':
 # ==========================================
 elif st.session_state.halaman == 'Home':
     st_autorefresh(interval=2000, key="home_refresh") 
-    
-    st.markdown("**Status GPS Anda:**")
-    # Murni tanpa parameter key untuk menghindari TypeError
-    location = streamlit_geolocation()
-    user_lat = location.get('latitude')
-    user_lon = location.get('longitude')
-
     m = folium.Map(location=[-7.049, 110.441], zoom_start=15)
 
     if user_lat and user_lon:
-        st.success(f"Sinyal Terkunci: {user_lat:.5f}, {user_lon:.5f}")
         if not df_aktif.empty:
             df_aktif['jarak'] = df_aktif.apply(lambda row: geodesic((user_lat, user_lon), (row['lat'], row['lon'])).meters, axis=1)
             titik_terdekat = df_aktif.loc[df_aktif['jarak'].idxmin()]
@@ -161,8 +171,6 @@ elif st.session_state.halaman == 'Home':
             except: pass
 
         folium.Marker([user_lat, user_lon], popup="Posisi Motor", icon=folium.Icon(color='blue', icon='motorcycle', prefix='fa')).add_to(m)
-    else:
-        st.info("Menunggu sinyal GPS... Pastikan izin lokasi aktif.")
 
     for _, p in df_aktif.iterrows():
         folium.Marker([p['lat'], p['lon']], popup=p['lokasi'], tooltip=p['pesan'], icon=folium.Icon(color='red', icon='exclamation-triangle', prefix='fa')).add_to(m)
@@ -176,11 +184,6 @@ elif st.session_state.halaman == 'Rute':
     sedang_navigasi = st.session_state.rute_data is not None
 
     if sedang_navigasi: st_autorefresh(interval=2000, key="rute_refresh")
-    
-    # Murni tanpa parameter key
-    location = streamlit_geolocation()
-    user_lat = location.get('latitude')
-    user_lon = location.get('longitude')
 
     if not sedang_navigasi:
         st.info("Ketik lokasi tujuan untuk memulai navigasi.")
@@ -189,7 +192,7 @@ elif st.session_state.halaman == 'Rute':
             submit_rute = st.form_submit_button("Cari Rute & Mulai Jalan")
 
         if submit_rute and tujuan:
-            if not user_lat or not user_lon: st.error("GPS belum terkunci. Tunggu sebentar lalu coba lagi.")
+            if not user_lat or not user_lon: st.error("Silakan aktifkan GPS Anda di bagian atas layar terlebih dahulu.")
             else:
                 geolocator = ArcGIS() 
                 with st.spinner("Menyiapkan rute navigasi..."):
@@ -256,8 +259,9 @@ elif st.session_state.halaman == 'Lapor':
     
     foto_upload = st.file_uploader("Upload Foto Lokasi Kejadian (Opsional)", type=['jpg', 'jpeg'])
     
-    default_lat = -7.049000
-    default_lon = 110.441000
+    # Gunakan koordinat GPS global jika ada, jika tidak pakai koordinat default
+    default_lat = user_lat if user_lat else -7.049000
+    default_lon = user_lon if user_lon else 110.441000
 
     if foto_upload is not None:
         try:
@@ -269,19 +273,9 @@ elif st.session_state.halaman == 'Lapor':
                 default_lon = exif_lon
                 st.success(f"✅ Koordinat berhasil ditemukan dari foto! (Lat: {exif_lat:.5f}, Lon: {exif_lon:.5f})")
             else:
-                st.warning("⚠️ Foto ini tidak mengandung data GPS. Silakan pakai fitur GPS di bawah.")
+                st.warning("⚠️ Foto ini tidak mengandung data GPS. Menggunakan titik GPS Anda saat ini.")
         except Exception as e:
             st.error("Terjadi kesalahan saat membaca foto.")
-
-    st.markdown("---")
-    st.write("**Atau klik tombol ini jika Anda sedang berada di lokasi kejadian:**")
-    
-    # Murni tanpa parameter key
-    loc = streamlit_geolocation()
-    if loc.get('latitude'):
-        default_lat = loc.get('latitude')
-        default_lon = loc.get('longitude')
-        st.success("✅ Koordinat HP Anda berhasil dikunci!")
 
     with st.form("form_tambah"):
         new_lok = st.text_input("Nama Lokasi (Contoh: Jalan Menurun Sigar Bencah)")
