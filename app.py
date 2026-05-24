@@ -6,6 +6,7 @@ import requests
 from streamlit_folium import st_folium
 from streamlit_geolocation import streamlit_geolocation
 from geopy.distance import geodesic
+from geopy.geocoders import Nominatim
 from streamlit_autorefresh import st_autorefresh
 
 # 1. PENGATURAN HALAMAN
@@ -43,13 +44,13 @@ if 'halaman' not in st.session_state:
 st.markdown("<h3 style='text-align: center; color: #E74C3C; margin-bottom: 10px;'>🛡️ Safe-Drive</h3>", unsafe_allow_html=True)
 
 # ==========================================
-# 4. MENU NAVIGASI
+# 4. MENU NAVIGASI (Exit diganti Rute)
 # ==========================================
 col1, col2, col3, col4 = st.columns(4)
 if col1.button("🏠 Home", use_container_width=True): st.session_state.halaman = 'Home'
-if col2.button("📂 Data", use_container_width=True): st.session_state.halaman = 'Data'
-if col3.button("⚙️ Set", use_container_width=True): st.session_state.halaman = 'Setting'
-if col4.button("🚪 Exit", use_container_width=True): st.session_state.halaman = 'Exit'
+if col2.button("🗺️ Rute", use_container_width=True): st.session_state.halaman = 'Rute'
+if col3.button("📂 Data", use_container_width=True): st.session_state.halaman = 'Data'
+if col4.button("⚙️ Set", use_container_width=True): st.session_state.halaman = 'Setting'
 
 st.markdown("---")
 
@@ -70,65 +71,118 @@ if st.session_state.halaman == 'Home':
         st.success(f"Sinyal Terkunci: {user_lat:.5f}, {user_lon:.5f}")
         
         if not df_bahaya.empty:
-            # 1. HITUNG JARAK KE SEMUA TITIK UNTUK MENCARI YANG TERDEKAT
             df_bahaya['jarak'] = df_bahaya.apply(lambda row: geodesic((user_lat, user_lon), (row['lat'], row['lon'])).meters, axis=1)
             titik_terdekat = df_bahaya.loc[df_bahaya['jarak'].idxmin()]
             jarak_terdekat = titik_terdekat['jarak']
             
-            # 2. SISTEM PERINGATAN (Hanya untuk titik terdekat)
             if jarak_terdekat < 200:
                 st.error(f"⚠️ BAHAYA: Anda mendekati {titik_terdekat['lokasi']} (Sisa {int(jarak_terdekat)} meter)!")
                 st.warning(f"Instruksi: {titik_terdekat['pesan']}")
-                st.components.v1.html(
-                    """<script>var audio = new Audio('https://www.soundjay.com/buttons/beep-01a.mp3'); audio.play();</script>""",
-                    height=0
-                )
+                st.components.v1.html("""<script>var audio = new Audio('https://www.soundjay.com/buttons/beep-01a.mp3'); audio.play();</script>""", height=0)
             else:
                 st.info(f"Titik rawan terdekat: {titik_terdekat['lokasi']} (Berjarak {int(jarak_terdekat)} meter)")
 
-            # 3. NAVIGASI GOOGLE MAPS (Menarik garis dari motor ke titik terdekat)
             url = f"http://router.project-osrm.org/route/v1/driving/{user_lon},{user_lat};{titik_terdekat['lon']},{titik_terdekat['lat']}?overview=full&geometries=geojson"
-            
             try:
                 res = requests.get(url)
                 data = res.json()
                 if data.get("code") == "Ok":
-                    route_geojson = data["routes"][0]["geometry"]
-                    folium.GeoJson(
-                        route_geojson,
-                        name="Rute Navigasi",
-                        style_function=lambda x: {'color': '#0078FF', 'weight': 7, 'opacity': 0.8} # Warna biru Google Maps
-                    ).add_to(m)
-                else:
-                    # Kalau server API sedang sibuk, pakai garis lurus putus-putus
-                    folium.PolyLine([[user_lat, user_lon], [titik_terdekat['lat'], titik_terdekat['lon']]], color='#0078FF', weight=5, dash_array='10').add_to(m)
+                    folium.GeoJson(data["routes"][0]["geometry"], name="Rute Navigasi", style_function=lambda x: {'color': '#0078FF', 'weight': 7, 'opacity': 0.8}).add_to(m)
             except:
-                folium.PolyLine([[user_lat, user_lon], [titik_terdekat['lat'], titik_terdekat['lon']]], color='#0078FF', weight=5, dash_array='10').add_to(m)
+                pass
 
-        # Marker posisi motor
-        folium.Marker(
-            [user_lat, user_lon], 
-            popup="Posisi Motor", 
-            icon=folium.Icon(color='blue', icon='motorcycle', prefix='fa')
-        ).add_to(m)
+        folium.Marker([user_lat, user_lon], popup="Posisi Motor", icon=folium.Icon(color='blue', icon='motorcycle', prefix='fa')).add_to(m)
     else:
         st.info("Menunggu sinyal GPS... Pastikan izin lokasi aktif.")
 
-    # Tampilkan semua marker titik bahaya
     for _, p in df_bahaya.iterrows():
-        folium.Marker(
-            [p['lat'], p['lon']], 
-            popup=p['lokasi'], 
-            tooltip=p['pesan'],
-            icon=folium.Icon(color='red', icon='exclamation-triangle', prefix='fa')
-        ).add_to(m)
-
+        folium.Marker([p['lat'], p['lon']], popup=p['lokasi'], tooltip=p['pesan'], icon=folium.Icon(color='red', icon='exclamation-triangle', prefix='fa')).add_to(m)
     st_folium(m, width=700, height=450)
+
+# ==========================================
+# HALAMAN BARU: PENGECEKAN RUTE
+# ==========================================
+elif st.session_state.halaman == 'Rute':
+    st.subheader("📍 Cek Keamanan Rute")
+    st.info("Ketik lokasi tujuan untuk melihat apakah jalur yang akan dilewati aman dari titik rawan.")
+    
+    location = streamlit_geolocation()
+    user_lat = location.get('latitude')
+    user_lon = location.get('longitude')
+
+    with st.form("form_cek_rute"):
+        tujuan = st.text_input("Mau ke mana? (Contoh: UNDIP Tembalang, Semarang)")
+        submit_rute = st.form_submit_button("Cari Rute & Analisis")
+
+    if submit_rute and tujuan:
+        if not user_lat or not user_lon:
+            st.error("GPS belum terkunci. Tunggu sebentar lalu coba lagi.")
+        else:
+            geolocator = Nominatim(user_agent="safedrive_tembalang")
+            with st.spinner("Mencari lokasi tujuan..."):
+                try:
+                    lokasi_tujuan = geolocator.geocode(tujuan)
+                    if lokasi_tujuan:
+                        dest_lat = lokasi_tujuan.latitude
+                        dest_lon = lokasi_tujuan.longitude
+
+                        # 1. Cari rute jalan pakai OSRM
+                        url = f"http://router.project-osrm.org/route/v1/driving/{user_lon},{user_lat};{dest_lon},{dest_lat}?overview=full&geometries=geojson"
+                        res = requests.get(url)
+                        data = res.json()
+
+                        if data.get("code") == "Ok":
+                            route_coords = data["routes"][0]["geometry"]["coordinates"] # Isinya [lon, lat]
+                            
+                            # 2. SCANNING BAHAYA: Cek apakah garis rute menabrak radius 200m dari titik rawan
+                            bahaya_dilewati = []
+                            for _, p in df_bahaya.iterrows():
+                                for coord in route_coords:
+                                    # Ingat: OSRM formatnya [lon, lat], Geodesic butuh [lat, lon]
+                                    jarak = geodesic((p['lat'], p['lon']), (coord[1], coord[0])).meters
+                                    if jarak < 200:
+                                        bahaya_dilewati.append(p)
+                                        break # Kalau udah kena, stop cek titik koordinat rute ini, lanjut scan bahaya selanjutnya
+
+                            # 3. MENGGAMBAR PETA HASIL ANALISIS
+                            m_rute = folium.Map(location=[user_lat, user_lon], zoom_start=14)
+                            
+                            if bahaya_dilewati:
+                                warna_rute = '#E74C3C' # Merah (Bahaya)
+                                st.error(f"⚠️ PERINGATAN! Rute ini akan melewati {len(bahaya_dilewati)} titik rawan.")
+                                for b in bahaya_dilewati:
+                                    st.warning(f"🚨 Area {b['lokasi']}: {b['pesan']}")
+                            else:
+                                warna_rute = '#2ECC71' # Hijau (Aman)
+                                st.success(f"✅ RUTE AMAN! Jalur menuju tujuanmu bebas dari titik rawan yang terdata.")
+
+                            # Gambar rutenya di peta
+                            folium.GeoJson(
+                                data["routes"][0]["geometry"],
+                                name="Hasil Analisis Rute",
+                                style_function=lambda x: {'color': warna_rute, 'weight': 6, 'opacity': 0.8}
+                            ).add_to(m_rute)
+
+                            # Marker Awal dan Akhir
+                            folium.Marker([user_lat, user_lon], popup="Mulai", icon=folium.Icon(color='blue', icon='play')).add_to(m_rute)
+                            folium.Marker([dest_lat, dest_lon], popup=tujuan, icon=folium.Icon(color='green', icon='flag')).add_to(m_rute)
+                            
+                            # Marker Bahaya yang dilewati
+                            for b in bahaya_dilewati:
+                                folium.Marker([b['lat'], b['lon']], tooltip=b['pesan'], icon=folium.Icon(color='red', icon='exclamation-triangle')).add_to(m_rute)
+
+                            st_folium(m_rute, width=700, height=450)
+                        else:
+                            st.error("Server rute sedang sibuk atau gagal mencari jalan.")
+                    else:
+                        st.error("Lokasi tidak ditemukan. Coba ketik lebih detail, pastikan ada kata 'Semarang'.")
+                except Exception as e:
+                    st.error(f"Terjadi kesalahan saat memproses rute.")
 
 elif st.session_state.halaman == 'Data':
     st.subheader("Database Titik Bahaya")
     if not df_bahaya.empty:
-        df_tampil = df_bahaya.drop(columns=['jarak'], errors='ignore') # Sembunyikan kolom jarak teknis
+        df_tampil = df_bahaya.drop(columns=['jarak'], errors='ignore') 
         st.metric(label="Total Titik Dipantau", value=f"{len(df_tampil)} Lokasi")
         st.dataframe(df_tampil, use_container_width=True)
     else:
@@ -145,7 +199,6 @@ elif st.session_state.halaman == 'Setting':
 
         if submit_tambah:
             if new_lok and new_pesan:
-                # Pastikan tidak bawa kolom jarak saat nyimpan
                 df_simpan = df_bahaya.drop(columns=['jarak'], errors='ignore') if not df_bahaya.empty else df_bahaya
                 data_baru = pd.DataFrame([{"lokasi": new_lok, "lat": new_lat, "lon": new_lon, "pesan": new_pesan}])
                 df_simpan = pd.concat([df_simpan, data_baru], ignore_index=True)
@@ -175,7 +228,3 @@ elif st.session_state.halaman == 'Setting':
     if not df_bahaya.empty:
         csv_data = df_bahaya.drop(columns=['jarak'], errors='ignore').to_csv(index=False).encode('utf-8')
         st.download_button(label="⬇️ Download hasil_survei_tembalang.csv", data=csv_data, file_name=FILE_CSV, mime='text/csv')
-
-elif st.session_state.halaman == 'Exit':
-    st.error("🔒 Sistem Peringatan Dini Dihentikan.")
-    st.markdown("<h4 style='text-align: center; color: gray; margin-top: 50px;'>Anda telah keluar dari aplikasi.</h4>", unsafe_allow_html=True)
