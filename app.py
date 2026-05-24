@@ -27,35 +27,70 @@ st.markdown(hide_st_style, unsafe_allow_html=True)
 
 FILE_CSV = 'hasil_survei_tembalang.csv'
 
+# 2. BACA DATA CSV & UPDATE STRUKTUR (Tambah kolom status)
 def load_csv():
     if os.path.exists(FILE_CSV):
-        return pd.read_csv(FILE_CSV)
+        df = pd.read_csv(FILE_CSV)
+        # Jika file lama belum punya kolom status, otomatis tambahkan dan anggap approved
+        if 'status' not in df.columns:
+            df['status'] = 'approved'
+            df.to_csv(FILE_CSV, index=False)
+        return df
     else:
-        return pd.DataFrame(columns=['lokasi', 'lat', 'lon', 'pesan'])
+        return pd.DataFrame(columns=['lokasi', 'lat', 'lon', 'pesan', 'status'])
 
 df_bahaya = load_csv()
+# Filter data khusus yang sudah di-ACC untuk dipakai di Peta & Sensor
+df_aktif = df_bahaya[df_bahaya['status'] == 'approved'].copy()
 
 # ==========================================
-# INISIALISASI OTAK MEMORI
+# INISIALISASI OTAK MEMORI & ROLE
 # ==========================================
 if 'halaman' not in st.session_state:
     st.session_state.halaman = 'Home'
 if 'rute_data' not in st.session_state:
     st.session_state.rute_data = None 
+if 'role' not in st.session_state:
+    st.session_state.role = 'User' # Default pengunjung adalah User biasa
 
+# ==========================================
+# SIDEBAR: PINTU MASUK ADMIN
+# ==========================================
+with st.sidebar:
+    st.markdown("### 🔐 Akses Admin")
+    if st.session_state.role == 'User':
+        pwd = st.text_input("Password", type="password")
+        if st.button("Login"):
+            if pwd == "admin123": # <--- INI PASSWORD ADMINNYA
+                st.session_state.role = 'Admin'
+                st.rerun()
+            else:
+                st.error("Password salah!")
+    else:
+        st.success("Halo, Admin!")
+        if st.button("Logout"):
+            st.session_state.role = 'User'
+            st.rerun()
+
+# 3. HEADER APLIKASI
 st.markdown("<h3 style='text-align: center; color: #E74C3C; margin-bottom: 10px;'>🛡️ Safe-Drive</h3>", unsafe_allow_html=True)
 
-# 4. MENU NAVIGASI 
-col1, col2, col3, col4 = st.columns(4)
+# 4. MENU NAVIGASI DINAMIS (Berubah kalau jadi Admin)
+if st.session_state.role == 'Admin':
+    col1, col2, col3, col4, col5 = st.columns(5)
+    if col5.button("🛡️ Admin", use_container_width=True): st.session_state.halaman = 'Admin'
+else:
+    col1, col2, col3, col4 = st.columns(4)
+
 if col1.button("🏠 Home", use_container_width=True): st.session_state.halaman = 'Home'
 if col2.button("🗺️ Rute", use_container_width=True): st.session_state.halaman = 'Rute'
 if col3.button("📂 Data", use_container_width=True): st.session_state.halaman = 'Data'
-if col4.button("⚙️ Set", use_container_width=True): st.session_state.halaman = 'Setting'
+if col4.button("➕ Lapor", use_container_width=True): st.session_state.halaman = 'Lapor' # Ganti nama dari Setting jadi Lapor
 
 st.markdown("---")
 
 # ==========================================
-# 5. KONTEN HALAMAN HOME
+# 5. KONTEN HALAMAN HOME (Pakai df_aktif)
 # ==========================================
 if st.session_state.halaman == 'Home':
     st_autorefresh(interval=2000, key="home_refresh") 
@@ -70,9 +105,9 @@ if st.session_state.halaman == 'Home':
     if user_lat and user_lon:
         st.success(f"Sinyal Terkunci: {user_lat:.5f}, {user_lon:.5f}")
         
-        if not df_bahaya.empty:
-            df_bahaya['jarak'] = df_bahaya.apply(lambda row: geodesic((user_lat, user_lon), (row['lat'], row['lon'])).meters, axis=1)
-            titik_terdekat = df_bahaya.loc[df_bahaya['jarak'].idxmin()]
+        if not df_aktif.empty:
+            df_aktif['jarak'] = df_aktif.apply(lambda row: geodesic((user_lat, user_lon), (row['lat'], row['lon'])).meters, axis=1)
+            titik_terdekat = df_aktif.loc[df_aktif['jarak'].idxmin()]
             jarak_terdekat = titik_terdekat['jarak']
             
             if jarak_terdekat < 200:
@@ -95,21 +130,18 @@ if st.session_state.halaman == 'Home':
     else:
         st.info("Menunggu sinyal GPS... Pastikan izin lokasi aktif.")
 
-    for _, p in df_bahaya.iterrows():
+    for _, p in df_aktif.iterrows():
         folium.Marker([p['lat'], p['lon']], popup=p['lokasi'], tooltip=p['pesan'], icon=folium.Icon(color='red', icon='exclamation-triangle', prefix='fa')).add_to(m)
     
     st_folium(m, width=700, height=450, returned_objects=[])
 
 # ==========================================
-# HALAMAN RUTE (LIVE TRACKING NAVIGASI)
+# HALAMAN RUTE (Pakai df_aktif)
 # ==========================================
 elif st.session_state.halaman == 'Rute':
     st.subheader("📍 Navigasi Rute")
-    
-    # CEK STATUS: Apakah memori rute sudah ada isinya?
     sedang_navigasi = st.session_state.rute_data is not None
 
-    # JIKA SEDANG NAVIGASI, NYALAKAN AUTO-REFRESH 2 DETIK!
     if sedang_navigasi:
         st_autorefresh(interval=2000, key="rute_refresh")
     
@@ -117,7 +149,6 @@ elif st.session_state.halaman == 'Rute':
     user_lat = location.get('latitude')
     user_lon = location.get('longitude')
 
-    # TAMPILKAN FORM PENCARIAN HANYA JIKA BELUM NAVIGASI
     if not sedang_navigasi:
         st.info("Ketik lokasi tujuan untuk memulai navigasi.")
         with st.form("form_cek_rute"):
@@ -144,7 +175,7 @@ elif st.session_state.halaman == 'Rute':
                                 route_coords = data["routes"][0]["geometry"]["coordinates"]
                                 
                                 bahaya_dilewati = []
-                                for _, p in df_bahaya.iterrows():
+                                for _, p in df_aktif.iterrows():
                                     for coord in route_coords:
                                         jarak = geodesic((p['lat'], p['lon']), (coord[1], coord[0])).meters
                                         if jarak < 200:
@@ -158,7 +189,7 @@ elif st.session_state.halaman == 'Rute':
                                     'geojson': data["routes"][0]["geometry"],
                                     'bahaya': bahaya_dilewati
                                 }
-                                st.rerun() # Refresh halaman untuk masuk ke mode navigasi
+                                st.rerun() 
                             else:
                                 st.error("Server rute gagal mencari jalan.")
                         else:
@@ -166,21 +197,17 @@ elif st.session_state.halaman == 'Rute':
                     except Exception as e:
                         st.error("Terjadi kesalahan sistem.")
 
-    # TAMPILAN PETA LIVE SAAT NAVIGASI AKTIF
     if sedang_navigasi:
         rd = st.session_state.rute_data
-        
         col_info, col_btn = st.columns([3, 1])
         col_info.success(f"Menuju: {rd['nama_tujuan']}")
         if col_btn.button("🛑 Selesai"):
             st.session_state.rute_data = None
             st.rerun()
 
-        # Peta di-center ke posisi motor TERBARU
         map_center_lat = user_lat if user_lat else rd.get('dest_lat', -7.049)
         map_center_lon = user_lon if user_lon else rd.get('dest_lon', 110.441)
-        
-        m_rute = folium.Map(location=[map_center_lat, map_center_lon], zoom_start=16) # Zoom lebih dekat ala Google Maps
+        m_rute = folium.Map(location=[map_center_lat, map_center_lon], zoom_start=16) 
         
         if rd['bahaya']:
             warna_rute = '#E74C3C' 
@@ -188,72 +215,97 @@ elif st.session_state.halaman == 'Rute':
         else:
             warna_rute = '#2ECC71' 
 
-        # Gambar garis rute
-        folium.GeoJson(
-            rd['geojson'],
-            name="Jalur",
-            style_function=lambda x: {'color': warna_rute, 'weight': 7, 'opacity': 0.8}
-        ).add_to(m_rute)
-
-        # Gambar posisi tujuan
+        folium.GeoJson(rd['geojson'], name="Jalur", style_function=lambda x: {'color': warna_rute, 'weight': 7, 'opacity': 0.8}).add_to(m_rute)
         folium.Marker([rd['dest_lat'], rd['dest_lon']], popup=rd['nama_tujuan'], icon=folium.Icon(color='green', icon='flag')).add_to(m_rute)
-        
-        # Gambar posisi titik rawan
         for b in rd['bahaya']:
             folium.Marker([b['lat'], b['lon']], tooltip=b['pesan'], icon=folium.Icon(color='red', icon='exclamation-triangle')).add_to(m_rute)
 
-        # GAMBAR POSISI MOTOR (AKAN BERGERAK KARENA AUTO-REFRESH)
         if user_lat and user_lon:
             folium.Marker([user_lat, user_lon], popup="Posisi Motor", icon=folium.Icon(color='blue', icon='motorcycle', prefix='fa')).add_to(m_rute)
-
         st_folium(m_rute, width=700, height=450, returned_objects=[])
 
+# ==========================================
+# HALAMAN DATA
+# ==========================================
 elif st.session_state.halaman == 'Data':
-    st.subheader("Database Titik Bahaya")
-    if not df_bahaya.empty:
-        df_tampil = df_bahaya.drop(columns=['jarak'], errors='ignore') 
-        st.metric(label="Total Titik Dipantau", value=f"{len(df_tampil)} Lokasi")
+    st.subheader("Database Titik Bahaya Terverifikasi")
+    if not df_aktif.empty:
+        df_tampil = df_aktif.drop(columns=['jarak', 'status'], errors='ignore') 
+        st.metric(label="Total Titik Aktif", value=f"{len(df_tampil)} Lokasi")
         st.dataframe(df_tampil, use_container_width=True)
     else:
-        st.info("Data masih kosong.")
+        st.info("Belum ada data titik bahaya yang disetujui.")
 
-elif st.session_state.halaman == 'Setting':
-    st.subheader("➕ Tambah Titik Baru")
+# ==========================================
+# HALAMAN LAPOR (Untuk Semua Pengguna)
+# ==========================================
+elif st.session_state.halaman == 'Lapor':
+    st.subheader("📣 Laporkan Titik Rawan Baru")
+    st.info("Data yang Anda kirimkan akan ditinjau oleh Admin sebelum tayang di peta publik demi menghindari laporan palsu.")
+    
     with st.form("form_tambah"):
         new_lok = st.text_input("Nama Lokasi")
         new_lat = st.number_input("Latitude", format="%.6f", value=-7.049000, step=0.000100)
         new_lon = st.number_input("Longitude", format="%.6f", value=110.441000, step=0.000100)
-        new_pesan = st.text_input("Pesan Peringatan")
-        submit_tambah = st.form_submit_button("Simpan Titik")
+        new_pesan = st.text_input("Pesan Peringatan (Kondisi Lapangan)")
+        submit_tambah = st.form_submit_button("Kirim Laporan")
 
         if submit_tambah:
             if new_lok and new_pesan:
-                df_simpan = df_bahaya.drop(columns=['jarak'], errors='ignore') if not df_bahaya.empty else df_bahaya
-                data_baru = pd.DataFrame([{"lokasi": new_lok, "lat": new_lat, "lon": new_lon, "pesan": new_pesan}])
-                df_simpan = pd.concat([df_simpan, data_baru], ignore_index=True)
+                data_baru = pd.DataFrame([{"lokasi": new_lok, "lat": new_lat, "lon": new_lon, "pesan": new_pesan, "status": "pending"}])
+                df_simpan = pd.concat([df_bahaya, data_baru], ignore_index=True)
                 df_simpan.to_csv(FILE_CSV, index=False)
-                st.success(f"Lokasi '{new_lok}' berhasil ditambahkan!")
+                st.success(f"Terima kasih! Lokasi '{new_lok}' telah dikirim dan menunggu persetujuan Admin.")
             else:
                 st.error("Nama Lokasi dan Pesan tidak boleh kosong!")
 
-    st.markdown("---")
-    
-    st.subheader("🗑️ Hapus Titik")
-    if not df_bahaya.empty:
-        with st.form("form_hapus"):
-            pilih_hapus = st.selectbox("Pilih lokasi yang ingin dihapus:", df_bahaya['lokasi'])
-            submit_hapus = st.form_submit_button("Hapus Titik")
-
-            if submit_hapus:
-                df_simpan = df_bahaya.drop(columns=['jarak'], errors='ignore')
-                df_simpan = df_simpan[df_simpan['lokasi'] != pilih_hapus]
-                df_simpan.to_csv(FILE_CSV, index=False)
-                st.success(f"Lokasi '{pilih_hapus}' berhasil dihapus!")
+# ==========================================
+# HALAMAN KHUSUS ADMIN (Review & Hapus)
+# ==========================================
+elif st.session_state.halaman == 'Admin':
+    if st.session_state.role != 'Admin':
+        st.error("Anda tidak memiliki akses ke halaman ini.")
     else:
-        st.info("Belum ada data titik bahaya.")
+        st.subheader("🛡️ Panel Validasi Admin")
         
-    st.markdown("---")
-    st.subheader("💾 Unduh Data CSV")
-    if not df_bahaya.empty:
-        csv_data = df_bahaya.drop(columns=['jarak'], errors='ignore').to_csv(index=False).encode('utf-8')
+        # 1. TABEL PENDING (Antrean Persetujuan)
+        st.markdown("#### ⏳ Laporan Menunggu Persetujuan")
+        df_pending = df_bahaya[df_bahaya['status'] == 'pending']
+        
+        if not df_pending.empty:
+            for index, row in df_pending.iterrows():
+                col_teks, col_acc, col_tolak = st.columns([3, 1, 1])
+                col_teks.info(f"**{row['lokasi']}** | {row['pesan']} *(Lat: {row['lat']}, Lon: {row['lon']})*")
+                
+                if col_acc.button("✅ Terima", key=f"acc_{index}"):
+                    df_bahaya.at[index, 'status'] = 'approved'
+                    df_bahaya.to_csv(FILE_CSV, index=False)
+                    st.rerun()
+                    
+                if col_tolak.button("❌ Tolak", key=f"tolak_{index}"):
+                    df_bahaya = df_bahaya.drop(index)
+                    df_bahaya.to_csv(FILE_CSV, index=False)
+                    st.rerun()
+        else:
+            st.success("Hore! Tidak ada laporan pending saat ini.")
+
+        st.markdown("---")
+        
+        # 2. FITUR HAPUS TITIK AKTIF
+        st.markdown("#### 🗑️ Hapus Titik yang Sudah Aktif")
+        if not df_aktif.empty:
+            with st.form("form_hapus_admin"):
+                pilih_hapus = st.selectbox("Pilih lokasi yang ingin dicabut dari peta:", df_aktif['lokasi'])
+                submit_hapus = st.form_submit_button("Cabut Titik")
+
+                if submit_hapus:
+                    df_bahaya = df_bahaya[df_bahaya['lokasi'] != pilih_hapus]
+                    df_bahaya.to_csv(FILE_CSV, index=False)
+                    st.success(f"Lokasi '{pilih_hapus}' berhasil dihapus secara permanen!")
+        else:
+            st.info("Tidak ada data aktif.")
+            
+        st.markdown("---")
+        st.markdown("#### 💾 Unduh Database Lengkap")
+        csv_data = df_bahaya.to_csv(index=False).encode('utf-8')
         st.download_button(label="⬇️ Download hasil_survei_tembalang.csv", data=csv_data, file_name=FILE_CSV, mime='text/csv')
