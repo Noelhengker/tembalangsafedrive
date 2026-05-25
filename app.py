@@ -32,22 +32,19 @@ st.markdown(hide_st_style, unsafe_allow_html=True)
 FILE_CSV = 'hasil_survei_tembalang.csv'
 
 # ==========================================
-# 🚀 FUNGSI AI PEMBACA TEKS KOORDINAT DI FOTO (OCR)
+# 🚀 FUNGSI AI PEMBACA TEKS KOORDINAT (OCR)
 # ==========================================
 def read_coordinates_from_image(img):
     try:
         text = pytesseract.image_to_string(img)
         matches = re.findall(r'-?\d{1,3}\.\d{4,}', text)
-        
         if len(matches) >= 2:
             val1 = float(matches[0])
             val2 = float(matches[1])
-            
             if abs(val1) < 90 and abs(val2) > 90:
                 return val1, val2
             elif abs(val2) < 90 and abs(val1) > 90:
                 return val2, val1
-                
         return None, None
     except Exception as e:
         return None, None
@@ -64,10 +61,13 @@ def load_csv():
 df_bahaya = load_csv()
 df_aktif = df_bahaya[df_bahaya['status'] == 'approved'].copy()
 
+# ==========================================
 # INISIALISASI OTAK MEMORI
+# ==========================================
 if 'halaman' not in st.session_state: st.session_state.halaman = 'Home'
 if 'rute_data' not in st.session_state: st.session_state.rute_data = None 
 if 'role' not in st.session_state: st.session_state.role = 'User'
+if 'jejak_motor' not in st.session_state: st.session_state.jejak_motor = [] # KEMBALINYA FITUR JEJAK MOTOR!
 
 # HEADER & MENU NAVIGASI
 st.markdown("<h3 style='text-align: center; color: #E74C3C; margin-bottom: 10px;'>🛡️ Safe-Drive</h3>", unsafe_allow_html=True)
@@ -85,15 +85,24 @@ else:
 
 st.markdown("---")
 
-# 📡 SENSOR GPS GLOBAL 
+# ==========================================
+# 📡 SENSOR GPS GLOBAL (Udah Diperbaiki buat Halaman Rute!)
+# ==========================================
 user_lat, user_lon = None, None
-if st.session_state.halaman in ['Home', 'Lapor']: 
+# Dulu halaman 'Rute' nggak masuk ke sini, makanya mati! Sekarang udah!
+if st.session_state.halaman in ['Home', 'Lapor', 'Rute']: 
     col_teks, col_gps = st.columns([1, 2])
-    col_teks.markdown("**📡 Sensor GPS Alarm:**")
+    col_teks.markdown("**📡 Sensor GPS Anda:**")
     with col_gps:
         location = streamlit_geolocation()
         user_lat = location.get('latitude')
         user_lon = location.get('longitude')
+    
+    # REKAM JEJAK MOTOR (Setiap kordinat berubah, dicatat di array)
+    if user_lat and user_lon:
+        pos_sekarang = [user_lat, user_lon]
+        if not st.session_state.jejak_motor or st.session_state.jejak_motor[-1] != pos_sekarang:
+            st.session_state.jejak_motor.append(pos_sekarang)
 
 # ==========================================
 # HALAMAN LOGIN ADMIN
@@ -115,6 +124,7 @@ elif st.session_state.halaman == 'Home':
     
     plugins.LocateControl(auto_start=True, position='bottomright', strings={'title': 'Lokasi Saya', 'popup': 'Anda di sini'}, flyTo=True).add_to(m)
 
+    # 1. Gambar Garis Alarm ke Titik Bahaya
     if user_lat and user_lon:
         if not df_aktif.empty:
             df_aktif['jarak'] = df_aktif.apply(lambda row: geodesic((user_lat, user_lon), (row['lat'], row['lon'])).meters, axis=1)
@@ -126,93 +136,115 @@ elif st.session_state.halaman == 'Home':
             else:
                 st.info(f"Titik terdekat: {titik_terdekat['lokasi']} ({int(titik_terdekat['jarak'])}m)")
 
+    # 2. Gambar Jejak Oranye Motor
+    if len(st.session_state.jejak_motor) > 1:
+        folium.PolyLine(
+            st.session_state.jejak_motor,
+            color='#e67e22',
+            weight=5,
+            opacity=0.8,
+            dash_array='10',
+            tooltip="Jejak Anda"
+        ).add_to(m)
+
     for _, p in df_aktif.iterrows():
         folium.Marker([p['lat'], p['lon']], popup=p['lokasi'], tooltip=p['pesan'], icon=folium.Icon(color='red', icon='exclamation-triangle')).add_to(m)
+    
+    if user_lat and user_lon:
+        folium.Marker([user_lat, user_lon], popup="Posisi Motor", icon=folium.Icon(color='blue', icon='motorcycle', prefix='fa')).add_to(m)
+    
     st_folium(m, width=700, height=450, returned_objects=[])
 
 # ==========================================
-# HALAMAN RUTE 
+# HALAMAN RUTE (LIVE NAVIGASI)
 # ==========================================
 elif st.session_state.halaman == 'Rute':
     st.subheader("📍 Navigasi Rute")
     
+    # KONDISI 1: Belum punya tujuan
     if not st.session_state.rute_data:
         st.info("Ketik lokasi tujuan. (Otomatis nyari di area Semarang)")
         with st.form("form_cek_rute"):
             tujuan = st.text_input("Mau ke mana? (Contoh: UNDIP Tembalang)")
-            submit_rute = st.form_submit_button("Cari Rute & Analisis")
+            submit_rute = st.form_submit_button("Cari Rute & Mulai Jalan")
 
         if submit_rute and tujuan:
             geolocator = ArcGIS() 
-            with st.spinner("Menyiapkan beberapa alternatif rute..."):
+            with st.spinner("Menganalisis tujuan..."):
                 try:
                     query_lokasi = f"{tujuan}, Semarang, Jawa Tengah, Indonesia"
                     lokasi_tujuan = geolocator.geocode(query_lokasi)
-                    
                     if lokasi_tujuan:
-                        dest_lat, dest_lon = lokasi_tujuan.latitude, lokasi_tujuan.longitude
-                        start_lat = user_lat if user_lat else -7.049000
-                        start_lon = user_lon if user_lon else 110.441000
-
-                        url = f"http://router.project-osrm.org/route/v1/driving/{start_lon},{start_lat};{dest_lon},{dest_lat}?overview=full&geometries=geojson&alternatives=3"
-                        res = requests.get(url)
-                        
-                        if res.status_code == 200:
-                            semua_rute = res.json().get("routes", [])
-                            rute_list_jadi = []
-                            
-                            for idx, rute in enumerate(semua_rute):
-                                route_coords = rute["geometry"]["coordinates"]
-                                bahaya_dilewati = []
-                                for _, p in df_aktif.iterrows():
-                                    for coord in route_coords:
-                                        if geodesic((p['lat'], p['lon']), (coord[1], coord[0])).meters < 200:
-                                            bahaya_dilewati.append(p.to_dict())
-                                            break 
-                                
-                                rute_list_jadi.append({
-                                    'geojson': rute["geometry"],
-                                    'bahaya': bahaya_dilewati,
-                                    'is_primary': (idx == 0),
-                                    'jarak_km': rute.get('distance', 0) / 1000
-                                })
-
-                            st.session_state.rute_data = {
-                                'nama_tujuan': lokasi_tujuan.address, 
-                                'dest_lat': dest_lat, 
-                                'dest_lon': dest_lon,
-                                'rute_list': rute_list_jadi
-                            }
-                            st.rerun() 
-                        else: st.error("Server rute OSRM gagal merespons.")
+                        # Kita cuma simpan tujuan akhirnya aja, rutenya dihitung live nanti!
+                        st.session_state.rute_data = {
+                            'nama_tujuan': lokasi_tujuan.address, 
+                            'dest_lat': lokasi_tujuan.latitude, 
+                            'dest_lon': lokasi_tujuan.longitude
+                        }
+                        st.rerun() 
                     else: st.error("Lokasi tidak ditemukan di area Semarang. Coba kata kunci lain.")
                 except Exception as e: st.error("Terjadi kesalahan sistem pencarian.")
 
+    # KONDISI 2: Sudah Punya Tujuan (LIVE NAVIGASI AKTIF!)
     if st.session_state.rute_data:
+        st_autorefresh(interval=3000, key="rute_live") # Nyalain refresh tiap 3 detik!
         rd = st.session_state.rute_data
+        
         col_info, col_btn = st.columns([3, 1])
         col_info.success(f"Menuju: {rd['nama_tujuan']}")
-        if col_btn.button("🛑 Selesai"): st.session_state.rute_data = None; st.rerun()
+        if col_btn.button("🛑 Selesai"): 
+            st.session_state.rute_data = None
+            st.session_state.jejak_motor = [] # Bersihkan jejak kalau udah selesai
+            st.rerun()
 
-        m_rute = folium.Map(location=[-7.049, 110.441], zoom_start=15) 
-        plugins.LocateControl(auto_start=True, position='bottomright', strings={'title': 'Lokasi Saya', 'popup': 'Anda di sini'}, flyTo=True).add_to(m_rute)
+        # Titik awal selalu mengunci ke kordinat motor TERBARU
+        start_lat = user_lat if user_lat else -7.049000
+        start_lon = user_lon if user_lon else 110.441000
 
-        for rute in rd['rute_list']:
-            if rute['is_primary']:
-                warna = '#E74C3C' if rute['bahaya'] else '#0078FF' 
-                ketebalan = 7
-                st.write(f"Rute Utama ({rute['jarak_km']:.1f} km) - {'⚠️ ADA TITIK RAWAN' if rute['bahaya'] else '✅ AMAN'}")
-            else:
-                warna = '#95A5A6' 
-                ketebalan = 5
-                st.write(f"Rute Alternatif ({rute['jarak_km']:.1f} km) - {'⚠️ ADA TITIK RAWAN' if rute['bahaya'] else '✅ AMAN'}")
+        m_rute = folium.Map(location=[start_lat, start_lon], zoom_start=16) 
+        plugins.LocateControl(auto_start=True, position='bottomright', strings={'title': 'Lokasi', 'popup': 'Anda di sini'}, flyTo=True).add_to(m_rute)
 
-            folium.GeoJson(rute['geojson'], style_function=lambda x, c=warna, w=ketebalan: {'color': c, 'weight': w, 'opacity': 0.8}).add_to(m_rute)
-            
-            for b in rute['bahaya']: 
-                folium.Marker([b['lat'], b['lon']], tooltip=b['pesan'], icon=folium.Icon(color='red', icon='exclamation-triangle')).add_to(m_rute)
+        # 🚀 MAGIC "GARIS MENGHILANG": Hitung rute dari HP (Live) -> Tujuan
+        url = f"http://router.project-osrm.org/route/v1/driving/{start_lon},{start_lat};{rd['dest_lon']},{rd['dest_lat']}?overview=full&geometries=geojson&alternatives=2"
+        try:
+            res = requests.get(url)
+            if res.status_code == 200:
+                semua_rute = res.json().get("routes", [])
+                for idx, rute in enumerate(semua_rute):
+                    route_coords = rute["geometry"]["coordinates"]
+                    bahaya_dilewati = []
+                    for _, p in df_aktif.iterrows():
+                        for coord in route_coords:
+                            if geodesic((p['lat'], p['lon']), (coord[1], coord[0])).meters < 200:
+                                bahaya_dilewati.append(p.to_dict()); break 
+
+                    is_primary = (idx == 0)
+                    warna = '#0078FF' if is_primary else '#95A5A6'
+                    if bahaya_dilewati and is_primary: warna = '#E74C3C'
+
+                    folium.GeoJson(rute["geometry"], style_function=lambda x, c=warna, w=7 if is_primary else 5: {'color': c, 'weight': w, 'opacity': 0.8}).add_to(m_rute)
+
+                    if is_primary and bahaya_dilewati:
+                        st.error(f"⚠️ RUTE UTAMA MELEWATI {len(bahaya_dilewati)} TITIK RAWAN!")
+                        for b in bahaya_dilewati:
+                            folium.Marker([b['lat'], b['lon']], tooltip=b['pesan'], icon=folium.Icon(color='red', icon='exclamation-triangle')).add_to(m_rute)
+        except: pass
+
+        # GAMBAR JEJAK MOTOR DI HALAMAN RUTE
+        if len(st.session_state.jejak_motor) > 1:
+            folium.PolyLine(
+                st.session_state.jejak_motor,
+                color='#e67e22',
+                weight=5,
+                opacity=0.8,
+                dash_array='10',
+                tooltip="Jejak Anda"
+            ).add_to(m_rute)
 
         folium.Marker([rd['dest_lat'], rd['dest_lon']], popup=rd['nama_tujuan'], icon=folium.Icon(color='green', icon='flag')).add_to(m_rute)
+        if user_lat and user_lon: 
+            folium.Marker([user_lat, user_lon], popup="Posisi Motor", icon=folium.Icon(color='blue', icon='motorcycle', prefix='fa')).add_to(m_rute)
+            
         st_folium(m_rute, width=700, height=450, returned_objects=[])
 
 # ==========================================
@@ -258,7 +290,7 @@ elif st.session_state.halaman == 'Lapor':
         except Exception as e: st.error("Gagal menjalankan AI pembaca teks. Pastikan packages.txt sudah dibuat.")
 
 # ==========================================
-# 🛡️ HALAMAN KHUSUS ADMIN (UPDATE KOORDINAT & GMAPS)
+# 🛡️ HALAMAN KHUSUS ADMIN
 # ==========================================
 elif st.session_state.halaman == 'Admin':
     if st.session_state.role != 'Admin': st.error("Anda tidak memiliki akses ke halaman ini.")
@@ -274,8 +306,6 @@ elif st.session_state.halaman == 'Admin':
         if not df_pending.empty:
             for index, row in df_pending.iterrows():
                 col_teks, col_acc, col_tolak = st.columns([3, 1, 1])
-                
-                # 🌟 TAMPILAN BARU: Menampilkan Koordinat & Link Google Maps!
                 info_text = f"""
                 **{row['lokasi']}** | {row['pesan']}
                 📍 Lat: `{row['lat']:.6f}`, Lon: `{row['lon']:.6f}`
@@ -296,12 +326,10 @@ elif st.session_state.halaman == 'Admin':
         st.markdown("#### 🗑️ Hapus Titik Aktif")
         if not df_aktif.empty:
             with st.form("form_hapus_admin"):
-                # 🌟 TAMPILAN BARU: Dropdown sekarang nampilin nama sekaligus angka koordinatnya
                 pilihan_aktif = df_aktif.apply(lambda x: f"{x['lokasi']} (Lat: {x['lat']:.5f}, Lon: {x['lon']:.5f})", axis=1)
                 pilih_hapus_str = st.selectbox("Pilih lokasi yang mau dihapus:", pilihan_aktif)
                 
                 if st.form_submit_button("Cabut Titik"):
-                    # Kita pisahkan nama lokasi asli buat proses penghapusan
                     nama_asli = pilih_hapus_str.split(" (Lat:")[0]
                     df_bahaya = df_bahaya[df_bahaya['lokasi'] != nama_asli]
                     df_bahaya.to_csv(FILE_CSV, index=False)
