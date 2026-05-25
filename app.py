@@ -5,7 +5,7 @@ from folium import plugins
 import os
 import requests
 import re
-import pytesseract # <-- LIBRARY AI PEMBACA TEKS
+import pytesseract
 from PIL import Image
 from streamlit_folium import st_folium
 from streamlit_geolocation import streamlit_geolocation
@@ -32,23 +32,17 @@ st.markdown(hide_st_style, unsafe_allow_html=True)
 FILE_CSV = 'hasil_survei_tembalang.csv'
 
 # ==========================================
-# 🚀 FUNGSI BARU: AI PEMBACA TEKS KOORDINAT DI FOTO (OCR)
+# 🚀 FUNGSI AI PEMBACA TEKS KOORDINAT DI FOTO (OCR)
 # ==========================================
 def read_coordinates_from_image(img):
     try:
-        # Mesin AI mengubah tulisan di dalam foto menjadi teks string
         text = pytesseract.image_to_string(img)
-        
-        # LOGIKA CERDAS: Cari semua angka desimal yang panjang (minimal 4 angka di belakang koma)
-        # Contoh: -7.04921 atau 110.44123
         matches = re.findall(r'-?\d{1,3}\.\d{4,}', text)
         
         if len(matches) >= 2:
             val1 = float(matches[0])
             val2 = float(matches[1])
             
-            # Koordinat Indonesia: Latitude pasti angka kecil (-11 s.d 6), Longitude angka besar (95 s.d 141)
-            # Kita otomatis pilah mana yang Lat dan mana yang Lon tanpa peduli posisinya di teks!
             if abs(val1) < 90 and abs(val2) > 90:
                 return val1, val2
             elif abs(val2) < 90 and abs(val1) > 90:
@@ -137,7 +131,7 @@ elif st.session_state.halaman == 'Home':
     st_folium(m, width=700, height=450, returned_objects=[])
 
 # ==========================================
-# HALAMAN RUTE (NAVIGASI BANYAK JALUR)
+# HALAMAN RUTE 
 # ==========================================
 elif st.session_state.halaman == 'Rute':
     st.subheader("📍 Navigasi Rute")
@@ -160,7 +154,6 @@ elif st.session_state.halaman == 'Rute':
                         start_lat = user_lat if user_lat else -7.049000
                         start_lon = user_lon if user_lon else 110.441000
 
-                        # 🌟 MAGIC: Kita minta sampai 3 alternatif rute ke server OSRM! (alternatives=3)
                         url = f"http://router.project-osrm.org/route/v1/driving/{start_lon},{start_lat};{dest_lon},{dest_lat}?overview=full&geometries=geojson&alternatives=3"
                         res = requests.get(url)
                         
@@ -168,7 +161,6 @@ elif st.session_state.halaman == 'Rute':
                             semua_rute = res.json().get("routes", [])
                             rute_list_jadi = []
                             
-                            # Cek bahaya untuk SETIAP rute alternatif
                             for idx, rute in enumerate(semua_rute):
                                 route_coords = rute["geometry"]["coordinates"]
                                 bahaya_dilewati = []
@@ -205,22 +197,18 @@ elif st.session_state.halaman == 'Rute':
         m_rute = folium.Map(location=[-7.049, 110.441], zoom_start=15) 
         plugins.LocateControl(auto_start=True, position='bottomright', strings={'title': 'Lokasi Saya', 'popup': 'Anda di sini'}, flyTo=True).add_to(m_rute)
 
-        # Menggambar semua rute yang ditemukan
         for rute in rd['rute_list']:
             if rute['is_primary']:
-                # Rute utama (paling direkomendasikan OSRM)
-                warna = '#E74C3C' if rute['bahaya'] else '#0078FF' # Merah kalau bahaya, Biru tebal kalau aman
+                warna = '#E74C3C' if rute['bahaya'] else '#0078FF' 
                 ketebalan = 7
                 st.write(f"Rute Utama ({rute['jarak_km']:.1f} km) - {'⚠️ ADA TITIK RAWAN' if rute['bahaya'] else '✅ AMAN'}")
             else:
-                # Rute alternatif 
-                warna = '#95A5A6' # Warna Abu-abu buat jalan alternatif
+                warna = '#95A5A6' 
                 ketebalan = 5
                 st.write(f"Rute Alternatif ({rute['jarak_km']:.1f} km) - {'⚠️ ADA TITIK RAWAN' if rute['bahaya'] else '✅ AMAN'}")
 
             folium.GeoJson(rute['geojson'], style_function=lambda x, c=warna, w=ketebalan: {'color': c, 'weight': w, 'opacity': 0.8}).add_to(m_rute)
             
-            # Gambar titik bahayanya
             for b in rute['bahaya']: 
                 folium.Marker([b['lat'], b['lon']], tooltip=b['pesan'], icon=folium.Icon(color='red', icon='exclamation-triangle')).add_to(m_rute)
 
@@ -238,10 +226,10 @@ elif st.session_state.halaman == 'Data':
     else: st.info("Belum ada data titik bahaya yang disetujui.")
 
 # ==========================================
-# HALAMAN LAPOR (DENGAN OCR/AI PEMBACA TEKS)
+# HALAMAN LAPOR 
 # ==========================================
 elif st.session_state.halaman == 'Lapor':
-    st.subheader("📸 Pelaporan Berbasis Geotag (Teks Foto)")
+    st.subheader("📸 Pelaporan Berbasis Teks Koordinat Foto")
     st.warning("Gunakan aplikasi kamera GPS. Mesin akan membaca teks koordinat (angka desimal) yang tertulis di foto Anda secara otomatis!")
     
     foto_upload = st.file_uploader("Pilih File Foto Kejadian", type=['jpg', 'jpeg', 'png'])
@@ -270,7 +258,7 @@ elif st.session_state.halaman == 'Lapor':
         except Exception as e: st.error("Gagal menjalankan AI pembaca teks. Pastikan packages.txt sudah dibuat.")
 
 # ==========================================
-# HALAMAN KHUSUS ADMIN 
+# 🛡️ HALAMAN KHUSUS ADMIN (UPDATE KOORDINAT & GMAPS)
 # ==========================================
 elif st.session_state.halaman == 'Admin':
     if st.session_state.role != 'Admin': st.error("Anda tidak memiliki akses ke halaman ini.")
@@ -286,7 +274,15 @@ elif st.session_state.halaman == 'Admin':
         if not df_pending.empty:
             for index, row in df_pending.iterrows():
                 col_teks, col_acc, col_tolak = st.columns([3, 1, 1])
-                col_teks.info(f"**{row['lokasi']}** | {row['pesan']}")
+                
+                # 🌟 TAMPILAN BARU: Menampilkan Koordinat & Link Google Maps!
+                info_text = f"""
+                **{row['lokasi']}** | {row['pesan']}
+                📍 Lat: `{row['lat']:.6f}`, Lon: `{row['lon']:.6f}`
+                [🗺️ Cek Titik di Google Maps](https://www.google.com/maps?q={row['lat']},{row['lon']})
+                """
+                col_teks.info(info_text)
+                
                 if col_acc.button("✅ Terima", key=f"acc_{index}"):
                     df_bahaya.at[index, 'status'] = 'approved'
                     df_bahaya.to_csv(FILE_CSV, index=False)
@@ -300,10 +296,17 @@ elif st.session_state.halaman == 'Admin':
         st.markdown("#### 🗑️ Hapus Titik Aktif")
         if not df_aktif.empty:
             with st.form("form_hapus_admin"):
-                pilih_hapus = st.selectbox("Pilih lokasi:", df_aktif['lokasi'])
+                # 🌟 TAMPILAN BARU: Dropdown sekarang nampilin nama sekaligus angka koordinatnya
+                pilihan_aktif = df_aktif.apply(lambda x: f"{x['lokasi']} (Lat: {x['lat']:.5f}, Lon: {x['lon']:.5f})", axis=1)
+                pilih_hapus_str = st.selectbox("Pilih lokasi yang mau dihapus:", pilihan_aktif)
+                
                 if st.form_submit_button("Cabut Titik"):
-                    df_bahaya = df_bahaya[df_bahaya['lokasi'] != pilih_hapus]
+                    # Kita pisahkan nama lokasi asli buat proses penghapusan
+                    nama_asli = pilih_hapus_str.split(" (Lat:")[0]
+                    df_bahaya = df_bahaya[df_bahaya['lokasi'] != nama_asli]
                     df_bahaya.to_csv(FILE_CSV, index=False)
-                    st.success("Berhasil dihapus!")
+                    st.success("Titik berhasil dicabut dari peta!")
+        
+        st.markdown("---")
         csv_data = df_bahaya.to_csv(index=False).encode('utf-8')
-        st.download_button("⬇️ Download CSV", data=csv_data, file_name=FILE_CSV, mime='text/csv')
+        st.download_button("⬇️ Download Database CSV", data=csv_data, file_name=FILE_CSV, mime='text/csv')
