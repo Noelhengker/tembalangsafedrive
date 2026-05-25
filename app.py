@@ -1,11 +1,12 @@
 import streamlit as st
 import pandas as pd
 import folium
-from folium import plugins # <--- KITA PAKAI PLUGIN DEWA INI BIAR BISA GERAK
+from folium import plugins
 import os
 import requests
+import re
+import pytesseract # <-- LIBRARY AI PEMBACA TEKS
 from PIL import Image
-from PIL.ExifTags import TAGS, GPSTAGS
 from streamlit_folium import st_folium
 from streamlit_geolocation import streamlit_geolocation
 from geopy.distance import geodesic
@@ -31,31 +32,31 @@ st.markdown(hide_st_style, unsafe_allow_html=True)
 FILE_CSV = 'hasil_survei_tembalang.csv'
 
 # ==========================================
-# FUNGSI PEMBONGKAR EXIF FOTO
+# 🚀 FUNGSI BARU: AI PEMBACA TEKS KOORDINAT DI FOTO (OCR)
 # ==========================================
-def get_exif_location(img):
+def read_coordinates_from_image(img):
     try:
-        exif = img._getexif()
-        if not exif: return None, None
-        geotagging = {}
-        for (idx, tag) in TAGS.items():
-            if tag == 'GPSInfo':
-                if idx not in exif: return None, None
-                for (key, val) in GPSTAGS.items():
-                    if key in exif[idx]:
-                        geotagging[val] = exif[idx][key]
-        if 'GPSLatitude' not in geotagging or 'GPSLongitude' not in geotagging: return None, None
-        def convert_to_degrees(value):
-            d = float(value[0])
-            m = float(value[1])
-            s = float(value[2])
-            return d + (m / 60.0) + (s / 3600.0)
-        lat = convert_to_degrees(geotagging['GPSLatitude'])
-        if geotagging.get('GPSLatitudeRef', 'N') != 'N': lat = -lat
-        lon = convert_to_degrees(geotagging['GPSLongitude'])
-        if geotagging.get('GPSLongitudeRef', 'E') != 'E': lon = -lon
-        return lat, lon
-    except Exception as e: return None, None
+        # Mesin AI mengubah tulisan di dalam foto menjadi teks string
+        text = pytesseract.image_to_string(img)
+        
+        # LOGIKA CERDAS: Cari semua angka desimal yang panjang (minimal 4 angka di belakang koma)
+        # Contoh: -7.04921 atau 110.44123
+        matches = re.findall(r'-?\d{1,3}\.\d{4,}', text)
+        
+        if len(matches) >= 2:
+            val1 = float(matches[0])
+            val2 = float(matches[1])
+            
+            # Koordinat Indonesia: Latitude pasti angka kecil (-11 s.d 6), Longitude angka besar (95 s.d 141)
+            # Kita otomatis pilah mana yang Lat dan mana yang Lon tanpa peduli posisinya di teks!
+            if abs(val1) < 90 and abs(val2) > 90:
+                return val1, val2
+            elif abs(val2) < 90 and abs(val1) > 90:
+                return val2, val1
+                
+        return None, None
+    except Exception as e:
+        return None, None
 
 def load_csv():
     if os.path.exists(FILE_CSV):
@@ -69,7 +70,7 @@ def load_csv():
 df_bahaya = load_csv()
 df_aktif = df_bahaya[df_bahaya['status'] == 'approved'].copy()
 
-# INISIALISASI OTAK MEMORI & ROLE
+# INISIALISASI OTAK MEMORI
 if 'halaman' not in st.session_state: st.session_state.halaman = 'Home'
 if 'rute_data' not in st.session_state: st.session_state.rute_data = None 
 if 'role' not in st.session_state: st.session_state.role = 'User'
@@ -118,7 +119,6 @@ elif st.session_state.halaman == 'Home':
     st_autorefresh(interval=3000, key="home_refresh") 
     m = folium.Map(location=[-7.049, 110.441], zoom_start=15)
     
-    # 🌟 MAGIC: Plugin ini bikin titik biru lu gerak mulus kayak Google Maps!
     plugins.LocateControl(auto_start=True, position='bottomright', strings={'title': 'Lokasi Saya', 'popup': 'Anda di sini'}, flyTo=True).add_to(m)
 
     if user_lat and user_lon:
@@ -137,46 +137,59 @@ elif st.session_state.halaman == 'Home':
     st_folium(m, width=700, height=450, returned_objects=[])
 
 # ==========================================
-# HALAMAN RUTE (NAVIGASI)
+# HALAMAN RUTE (NAVIGASI BANYAK JALUR)
 # ==========================================
 elif st.session_state.halaman == 'Rute':
     st.subheader("📍 Navigasi Rute")
     
-    # Refresh dimatikan biar lu ngetik ngga keganggu berkedip!
     if not st.session_state.rute_data:
-        st.info("Ketik lokasi tujuan. (Otomatis nyari di area Semarang & sekitarnya)")
+        st.info("Ketik lokasi tujuan. (Otomatis nyari di area Semarang)")
         with st.form("form_cek_rute"):
             tujuan = st.text_input("Mau ke mana? (Contoh: UNDIP Tembalang)")
-            submit_rute = st.form_submit_button("Cari Rute & Mulai Jalan")
+            submit_rute = st.form_submit_button("Cari Rute & Analisis")
 
         if submit_rute and tujuan:
             geolocator = ArcGIS() 
-            with st.spinner("Menyiapkan rute navigasi..."):
+            with st.spinner("Menyiapkan beberapa alternatif rute..."):
                 try:
-                    # 🌟 MAGIC 2: Kunci area pencarian di Semarang biar ngga nyasar ke luar kota
                     query_lokasi = f"{tujuan}, Semarang, Jawa Tengah, Indonesia"
                     lokasi_tujuan = geolocator.geocode(query_lokasi)
                     
                     if lokasi_tujuan:
                         dest_lat, dest_lon = lokasi_tujuan.latitude, lokasi_tujuan.longitude
-                        
-                        # Posisikan titik awal navigasi dari tengah Tembalang jika GPS belum nyala
                         start_lat = user_lat if user_lat else -7.049000
                         start_lon = user_lon if user_lon else 110.441000
 
-                        url = f"http://router.project-osrm.org/route/v1/driving/{start_lon},{start_lat};{dest_lon},{dest_lat}?overview=full&geometries=geojson"
+                        # 🌟 MAGIC: Kita minta sampai 3 alternatif rute ke server OSRM! (alternatives=3)
+                        url = f"http://router.project-osrm.org/route/v1/driving/{start_lon},{start_lat};{dest_lon},{dest_lat}?overview=full&geometries=geojson&alternatives=3"
                         res = requests.get(url)
+                        
                         if res.status_code == 200:
-                            route_coords = res.json()["routes"][0]["geometry"]["coordinates"]
-                            bahaya_dilewati = []
-                            for _, p in df_aktif.iterrows():
-                                for coord in route_coords:
-                                    if geodesic((p['lat'], p['lon']), (coord[1], coord[0])).meters < 200:
-                                        bahaya_dilewati.append(p.to_dict()); break 
+                            semua_rute = res.json().get("routes", [])
+                            rute_list_jadi = []
+                            
+                            # Cek bahaya untuk SETIAP rute alternatif
+                            for idx, rute in enumerate(semua_rute):
+                                route_coords = rute["geometry"]["coordinates"]
+                                bahaya_dilewati = []
+                                for _, p in df_aktif.iterrows():
+                                    for coord in route_coords:
+                                        if geodesic((p['lat'], p['lon']), (coord[1], coord[0])).meters < 200:
+                                            bahaya_dilewati.append(p.to_dict())
+                                            break 
+                                
+                                rute_list_jadi.append({
+                                    'geojson': rute["geometry"],
+                                    'bahaya': bahaya_dilewati,
+                                    'is_primary': (idx == 0),
+                                    'jarak_km': rute.get('distance', 0) / 1000
+                                })
 
                             st.session_state.rute_data = {
-                                'nama_tujuan': lokasi_tujuan.address, 'dest_lat': dest_lat, 'dest_lon': dest_lon,
-                                'geojson': res.json()["routes"][0]["geometry"], 'bahaya': bahaya_dilewati
+                                'nama_tujuan': lokasi_tujuan.address, 
+                                'dest_lat': dest_lat, 
+                                'dest_lon': dest_lon,
+                                'rute_list': rute_list_jadi
                             }
                             st.rerun() 
                         else: st.error("Server rute OSRM gagal merespons.")
@@ -190,16 +203,28 @@ elif st.session_state.halaman == 'Rute':
         if col_btn.button("🛑 Selesai"): st.session_state.rute_data = None; st.rerun()
 
         m_rute = folium.Map(location=[-7.049, 110.441], zoom_start=15) 
-        
-        # 🌟 MAGIC 3: Tracker GPS Live diaktifkan di halaman Rute!
         plugins.LocateControl(auto_start=True, position='bottomright', strings={'title': 'Lokasi Saya', 'popup': 'Anda di sini'}, flyTo=True).add_to(m_rute)
 
-        warna_rute = '#E74C3C' if rd['bahaya'] else '#2ECC71' 
-        if rd['bahaya']: st.error(f"⚠️ PERINGATAN! Rute ini melewati {len(rd['bahaya'])} titik rawan.")
+        # Menggambar semua rute yang ditemukan
+        for rute in rd['rute_list']:
+            if rute['is_primary']:
+                # Rute utama (paling direkomendasikan OSRM)
+                warna = '#E74C3C' if rute['bahaya'] else '#0078FF' # Merah kalau bahaya, Biru tebal kalau aman
+                ketebalan = 7
+                st.write(f"Rute Utama ({rute['jarak_km']:.1f} km) - {'⚠️ ADA TITIK RAWAN' if rute['bahaya'] else '✅ AMAN'}")
+            else:
+                # Rute alternatif 
+                warna = '#95A5A6' # Warna Abu-abu buat jalan alternatif
+                ketebalan = 5
+                st.write(f"Rute Alternatif ({rute['jarak_km']:.1f} km) - {'⚠️ ADA TITIK RAWAN' if rute['bahaya'] else '✅ AMAN'}")
 
-        folium.GeoJson(rd['geojson'], name="Jalur", style_function=lambda x: {'color': warna_rute, 'weight': 7, 'opacity': 0.8}).add_to(m_rute)
+            folium.GeoJson(rute['geojson'], style_function=lambda x, c=warna, w=ketebalan: {'color': c, 'weight': w, 'opacity': 0.8}).add_to(m_rute)
+            
+            # Gambar titik bahayanya
+            for b in rute['bahaya']: 
+                folium.Marker([b['lat'], b['lon']], tooltip=b['pesan'], icon=folium.Icon(color='red', icon='exclamation-triangle')).add_to(m_rute)
+
         folium.Marker([rd['dest_lat'], rd['dest_lon']], popup=rd['nama_tujuan'], icon=folium.Icon(color='green', icon='flag')).add_to(m_rute)
-        for b in rd['bahaya']: folium.Marker([b['lat'], b['lon']], tooltip=b['pesan'], icon=folium.Icon(color='red', icon='exclamation-triangle')).add_to(m_rute)
         st_folium(m_rute, width=700, height=450, returned_objects=[])
 
 # ==========================================
@@ -213,19 +238,22 @@ elif st.session_state.halaman == 'Data':
     else: st.info("Belum ada data titik bahaya yang disetujui.")
 
 # ==========================================
-# HALAMAN LAPOR 
+# HALAMAN LAPOR (DENGAN OCR/AI PEMBACA TEKS)
 # ==========================================
 elif st.session_state.halaman == 'Lapor':
-    st.subheader("📸 Pelaporan Berbasis Geotag")
-    st.warning("PENTING: Sistem hanya menerima foto asli dari kamera HP yang memiliki data koordinat GPS (Geotag).")
+    st.subheader("📸 Pelaporan Berbasis Geotag (Teks Foto)")
+    st.warning("Gunakan aplikasi kamera GPS. Mesin akan membaca teks koordinat (angka desimal) yang tertulis di foto Anda secara otomatis!")
+    
     foto_upload = st.file_uploader("Pilih File Foto Kejadian", type=['jpg', 'jpeg', 'png'])
     
     if foto_upload is not None:
         try:
             img = Image.open(foto_upload)
-            exif_lat, exif_lon = get_exif_location(img)
+            with st.spinner("AI sedang membaca teks koordinat di foto Anda..."):
+                exif_lat, exif_lon = read_coordinates_from_image(img)
+            
             if exif_lat and exif_lon:
-                st.success(f"✅ Data GPS Tervalidasi! (Lat: {exif_lat:.5f}, Lon: {exif_lon:.5f})")
+                st.success(f"✅ AI Berhasil membaca teks! (Lat: {exif_lat:.5f}, Lon: {exif_lon:.5f})")
                 with st.form("form_tambah_geotag"):
                     new_lok = st.text_input("Nama Lokasi")
                     st.text_input("Latitude", value=f"{exif_lat:.6f}", disabled=True)
@@ -237,8 +265,9 @@ elif st.session_state.halaman == 'Lapor':
                             df_simpan = pd.concat([df_bahaya, data_baru], ignore_index=True)
                             df_simpan.to_csv(FILE_CSV, index=False)
                             st.success("Laporan berhasil dikirim ke Admin.")
-            else: st.error("❌ FOTO DITOLAK: Tidak mengandung data GPS.")
-        except Exception as e: st.error("Masalah saat memproses foto.")
+            else: 
+                st.error("❌ TEKS TIDAK DITEMUKAN: Pastikan di foto Anda tertulis angka koordinat desimal (contoh: -7.0490, 110.4410) yang terbaca jelas.")
+        except Exception as e: st.error("Gagal menjalankan AI pembaca teks. Pastikan packages.txt sudah dibuat.")
 
 # ==========================================
 # HALAMAN KHUSUS ADMIN 
