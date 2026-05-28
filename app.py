@@ -11,6 +11,7 @@ from streamlit_folium import st_folium
 from streamlit_geolocation import streamlit_geolocation
 from geopy.distance import geodesic
 from geopy.geocoders import ArcGIS
+from streamlit_autorefresh import st_autorefresh
 
 # 1. PENGATURAN HALAMAN
 st.set_page_config(page_title="Safe-Drive", layout="centered", page_icon="🛡️")
@@ -64,7 +65,6 @@ df_aktif = df_bahaya[df_bahaya['status'] == 'approved'].copy()
 # INISIALISASI OTAK MEMORI
 # ==========================================
 if 'halaman' not in st.session_state: st.session_state.halaman = 'Home'
-if 'rute_data' not in st.session_state: st.session_state.rute_data = None 
 if 'role' not in st.session_state: st.session_state.role = 'User'
 
 # HEADER & MENU NAVIGASI
@@ -83,11 +83,11 @@ else:
 
 st.markdown("---")
 
-# 📡 SENSOR GPS AWAL (Buat ngunci kordinat)
+# 📡 SENSOR GPS GLOBAL 
 user_lat, user_lon = None, None
 if st.session_state.halaman in ['Home', 'Lapor', 'Rute']: 
     col_teks, col_gps = st.columns([1, 2])
-    col_teks.markdown("**📡 Sensor Lokasi Saat Ini:**")
+    col_teks.markdown("**📡 Sensor GPS Anda:**")
     with col_gps:
         location = streamlit_geolocation()
         user_lat = location.get('latitude')
@@ -108,9 +108,9 @@ if st.session_state.halaman == 'Login':
 # HALAMAN HOME
 # ==========================================
 elif st.session_state.halaman == 'Home':
+    st_autorefresh(interval=3000, key="home_refresh") 
     m = folium.Map(location=[-7.049, 110.441], zoom_start=15)
     
-    # MAGIC: Motor lu bakal tetep gerak mulus karena plugin ini ngebaca GPS langsung dari Browser (bukan Python)
     plugins.LocateControl(auto_start=True, position='bottomright', strings={'title': 'Lokasi Saya', 'popup': 'Anda di sini'}, flyTo=True).add_to(m)
 
     if user_lat and user_lon:
@@ -120,6 +120,7 @@ elif st.session_state.halaman == 'Home':
             
             if titik_terdekat['jarak'] < 200:
                 st.error(f"⚠️ BAHAYA: Dekat {titik_terdekat['lokasi']} (Sisa {int(titik_terdekat['jarak'])}m)!")
+                st.components.v1.html("""<script>var audio = new Audio('https://www.soundjay.com/buttons/beep-01a.mp3'); audio.play();</script>""", height=0)
             else:
                 st.info(f"Titik terdekat: {titik_terdekat['lokasi']} ({int(titik_terdekat['jarak'])}m)")
 
@@ -128,94 +129,68 @@ elif st.session_state.halaman == 'Home':
     st_folium(m, width=700, height=450, returned_objects=[])
 
 # ==========================================
-# HALAMAN RUTE 
+# 🌟 HALAMAN RUTE (PRE-TRIP ANALYZER + GOOGLE MAPS)
 # ==========================================
 elif st.session_state.halaman == 'Rute':
-    st.subheader("📍 Analisis Rute & Alternatif")
+    st.subheader("📍 Pengecekan Rute Aman")
+    st.info("Ketik lokasi tujuan untuk menganalisis bahaya di jalan, lalu buka di Google Maps.")
     
-    if not st.session_state.rute_data:
-        st.info("Ketik lokasi tujuan. Mesin akan mencari Rute Utama & Alternatif di sekitar Semarang.")
-        with st.form("form_cek_rute"):
-            tujuan = st.text_input("Mau ke mana? (Contoh: UNDIP Tembalang)")
-            submit_rute = st.form_submit_button("Analisis Rute")
+    with st.form("form_cek_rute"):
+        tujuan = st.text_input("Mau ke mana? (Contoh: UNDIP Tembalang)")
+        submit_rute = st.form_submit_button("Cari & Analisis")
 
-        if submit_rute and tujuan:
+    if submit_rute and tujuan:
+        if not user_lat or not user_lon:
+            st.error("⚠️ Aktifkan GPS di bagian atas layar terlebih dahulu agar kami tahu dari mana Anda berangkat.")
+        else:
             geolocator = ArcGIS() 
-            with st.spinner("Menyiapkan rute navigasi..."):
+            with st.spinner("Mencari lokasi dan menganalisis bahaya di jalur..."):
                 try:
-                    query_lokasi = f"{tujuan}, Semarang, Jawa Tengah, Indonesia"
+                    # Kunci pencarian di area Jawa Tengah
+                    query_lokasi = f"{tujuan}, Jawa Tengah, Indonesia"
                     lokasi_tujuan = geolocator.geocode(query_lokasi)
                     
                     if lokasi_tujuan:
                         dest_lat = lokasi_tujuan.latitude
                         dest_lon = lokasi_tujuan.longitude
-                        start_lat = user_lat if user_lat else -7.049000
-                        start_lon = user_lon if user_lon else 110.441000
 
-                        # Cari maksimal 3 alternatif rute
-                        url = f"http://router.project-osrm.org/route/v1/driving/{start_lon},{start_lat};{dest_lon},{dest_lat}?overview=full&geometries=geojson&alternatives=3"
+                        # Hitung rute murni untuk mengecek tabrakan dengan titik rawan
+                        url = f"http://router.project-osrm.org/route/v1/driving/{user_lon},{user_lat};{dest_lon},{dest_lat}?overview=full&geometries=geojson"
                         res = requests.get(url)
                         
+                        bahaya_dilewati = []
                         if res.status_code == 200:
-                            semua_rute = res.json().get("routes", [])
-                            rute_list_jadi = []
-                            
-                            for idx, rute in enumerate(semua_rute):
-                                route_coords = rute["geometry"]["coordinates"]
-                                bahaya_dilewati = []
-                                for _, p in df_aktif.iterrows():
-                                    for coord in route_coords:
-                                        if geodesic((p['lat'], p['lon']), (coord[1], coord[0])).meters < 200:
-                                            bahaya_dilewati.append(p.to_dict())
-                                            break 
-                                
-                                rute_list_jadi.append({
-                                    'geojson': rute["geometry"],
-                                    'bahaya': bahaya_dilewati,
-                                    'is_primary': (idx == 0),
-                                    'jarak_km': rute.get('distance', 0) / 1000
-                                })
+                            route_coords = res.json()["routes"][0]["geometry"]["coordinates"]
+                            for _, p in df_aktif.iterrows():
+                                for coord in route_coords:
+                                    if geodesic((p['lat'], p['lon']), (coord[1], coord[0])).meters < 200:
+                                        bahaya_dilewati.append(p)
+                                        break 
 
-                            st.session_state.rute_data = {
-                                'nama_tujuan': lokasi_tujuan.address, 
-                                'dest_lat': dest_lat, 
-                                'dest_lon': dest_lon,
-                                'start_lat': start_lat,
-                                'start_lon': start_lon,
-                                'rute_list': rute_list_jadi
-                            }
-                            st.rerun() 
-                        else: st.error("Server OSRM gagal mencari jalan.")
-                    else: st.error("Lokasi tidak ditemukan.")
-                except Exception as e: st.error("Terjadi kesalahan sistem.")
+                        # Tampilkan Hasil Analisis
+                        st.success(f"Tujuan Ditemukan: **{lokasi_tujuan.address}**")
+                        
+                        if bahaya_dilewati:
+                            st.error(f"⚠️ PERHATIAN! Jalur ke sana berpotensi melewati {len(bahaya_dilewati)} area rawan:")
+                            for b in bahaya_dilewati:
+                                st.warning(f"🚨 **{b['lokasi']}**: {b['pesan']}")
+                        else:
+                            st.success("✅ KEREN! Jalur menuju tujuan Anda terpantau bebas dari titik bahaya.")
 
-    if st.session_state.rute_data:
-        rd = st.session_state.rute_data
-        col_info, col_btn = st.columns([3, 1])
-        col_info.success(f"Menuju: {rd['nama_tujuan']}")
-        if col_btn.button("🛑 Tutup Peta"): st.session_state.rute_data = None; st.rerun()
+                        # 🌟 TOMBOL AJAIB MENUJU GOOGLE MAPS APP
+                        st.markdown("---")
+                        st.markdown("### Siap Berangkat?")
+                        
+                        # Link API Resmi Google Maps untuk buka aplikasi langsung
+                        gmaps_url = f"https://www.google.com/maps/dir/?api=1&origin={user_lat},{user_lon}&destination={dest_lat},{dest_lon}&travelmode=driving"
+                        
+                        st.link_button("🗺️ Buka Navigasi di Google Maps", gmaps_url, type="primary", use_container_width=True)
+                        st.markdown("*(Aplikasi Google Maps Anda akan otomatis terbuka)*")
 
-        m_rute = folium.Map(location=[rd['start_lat'], rd['start_lon']], zoom_start=15) 
-        plugins.LocateControl(auto_start=True, position='bottomright', strings={'title': 'Lokasi Saya', 'popup': 'Anda di sini'}, flyTo=True).add_to(m_rute)
-
-        # Menggambar semua rute
-        for rute in rd['rute_list']:
-            if rute['is_primary']:
-                warna = '#E74C3C' if rute['bahaya'] else '#0078FF' 
-                ketebalan = 7
-                st.write(f"**Rute Utama** ({rute['jarak_km']:.1f} km) - {'⚠️ RAWAN' if rute['bahaya'] else '✅ AMAN'}")
-            else:
-                warna = '#95A5A6' 
-                ketebalan = 5
-                st.write(f"Rute Alternatif ({rute['jarak_km']:.1f} km) - {'⚠️ RAWAN' if rute['bahaya'] else '✅ AMAN'}")
-
-            folium.GeoJson(rute['geojson'], style_function=lambda x, c=warna, w=ketebalan: {'color': c, 'weight': w, 'opacity': 0.8}).add_to(m_rute)
-            
-            for b in rute['bahaya']: 
-                folium.Marker([b['lat'], b['lon']], tooltip=b['pesan'], icon=folium.Icon(color='red', icon='exclamation-triangle')).add_to(m_rute)
-
-        folium.Marker([rd['dest_lat'], rd['dest_lon']], popup=rd['nama_tujuan'], icon=folium.Icon(color='green', icon='flag')).add_to(m_rute)
-        st_folium(m_rute, width=700, height=450, returned_objects=[])
+                    else: 
+                        st.error("Lokasi tidak ditemukan. Coba ketik nama tempat yang lebih lengkap.")
+                except Exception as e: 
+                    st.error("Terjadi kesalahan sistem pencarian.")
 
 # ==========================================
 # HALAMAN DATA
@@ -228,7 +203,7 @@ elif st.session_state.halaman == 'Data':
     else: st.info("Belum ada data titik bahaya yang disetujui.")
 
 # ==========================================
-# HALAMAN LAPOR 
+# HALAMAN LAPOR (DENGAN AI OCR)
 # ==========================================
 elif st.session_state.halaman == 'Lapor':
     st.subheader("📸 Pelaporan Berbasis Teks Koordinat Foto")
@@ -260,7 +235,7 @@ elif st.session_state.halaman == 'Lapor':
         except Exception as e: st.error("Gagal menjalankan AI pembaca teks. Pastikan packages.txt sudah dibuat.")
 
 # ==========================================
-# 🛡️ HALAMAN KHUSUS ADMIN
+# 🛡️ HALAMAN KHUSUS ADMIN 
 # ==========================================
 elif st.session_state.halaman == 'Admin':
     if st.session_state.role != 'Admin': st.error("Anda tidak memiliki akses ke halaman ini.")
@@ -276,10 +251,12 @@ elif st.session_state.halaman == 'Admin':
         if not df_pending.empty:
             for index, row in df_pending.iterrows():
                 col_teks, col_acc, col_tolak = st.columns([3, 1, 1])
+                
+                # Menampilkan link cek lokasi ke G-Maps
                 info_text = f"""
                 **{row['lokasi']}** | {row['pesan']}
                 📍 Lat: `{row['lat']:.6f}`, Lon: `{row['lon']:.6f}`
-                [🗺️ Cek Titik di Google Maps](https://www.google.com/maps?q={row['lat']},{row['lon']})
+                [🗺️ Cek Titik di Google Maps](https://www.google.com/maps/search/?api=1&query={row['lat']},{row['lon']})
                 """
                 col_teks.info(info_text)
                 
