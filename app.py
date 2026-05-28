@@ -11,7 +11,6 @@ from streamlit_folium import st_folium
 from streamlit_geolocation import streamlit_geolocation
 from geopy.distance import geodesic
 from geopy.geocoders import ArcGIS
-from streamlit_autorefresh import st_autorefresh
 
 # 1. PENGATURAN HALAMAN
 st.set_page_config(page_title="Safe-Drive", layout="centered", page_icon="🛡️")
@@ -67,7 +66,6 @@ df_aktif = df_bahaya[df_bahaya['status'] == 'approved'].copy()
 if 'halaman' not in st.session_state: st.session_state.halaman = 'Home'
 if 'rute_data' not in st.session_state: st.session_state.rute_data = None 
 if 'role' not in st.session_state: st.session_state.role = 'User'
-if 'jejak_motor' not in st.session_state: st.session_state.jejak_motor = [] 
 
 # HEADER & MENU NAVIGASI
 st.markdown("<h3 style='text-align: center; color: #E74C3C; margin-bottom: 10px;'>🛡️ Safe-Drive</h3>", unsafe_allow_html=True)
@@ -85,51 +83,15 @@ else:
 
 st.markdown("---")
 
-# 📡 SENSOR GPS GLOBAL 
+# 📡 SENSOR GPS AWAL (Buat ngunci kordinat)
 user_lat, user_lon = None, None
 if st.session_state.halaman in ['Home', 'Lapor', 'Rute']: 
     col_teks, col_gps = st.columns([1, 2])
-    col_teks.markdown("**📡 Sensor GPS Anda:**")
+    col_teks.markdown("**📡 Sensor Lokasi Saat Ini:**")
     with col_gps:
         location = streamlit_geolocation()
         user_lat = location.get('latitude')
         user_lon = location.get('longitude')
-    
-    if user_lat and user_lon:
-        pos_sekarang = [user_lat, user_lon]
-        if not st.session_state.jejak_motor or st.session_state.jejak_motor[-1] != pos_sekarang:
-            st.session_state.jejak_motor.append(pos_sekarang)
-
-# ==========================================
-# 🚨 SISTEM SUPER ALARM & POP-UP (Aktif di Home & Rute)
-# ==========================================
-def cek_dan_bunyikan_alarm(lat, lon):
-    if not df_aktif.empty:
-        # Hitung jarak murni dari GPS HP ke semua titik
-        df_aktif['jarak'] = df_aktif.apply(lambda row: geodesic((lat, lon), (row['lat'], row['lon'])).meters, axis=1)
-        titik_terdekat = df_aktif.loc[df_aktif['jarak'].idxmin()]
-        
-        jarak_meter = int(titik_terdekat['jarak'])
-        if jarak_meter < 200:
-            # 1. Peringatan Bawaan
-            st.toast(f"🚨 BAHAYA: {titik_terdekat['lokasi']} di depan!", icon="⚠️")
-            
-            # 2. POP-UP CSS RAKSASA BERKEDIP
-            st.markdown(f"""
-                <div style='position: fixed; top: 0; left: 0; width: 100%; background-color: #E74C3C; color: white; text-align: center; padding: 25px; z-index: 9999; font-size: 22px; font-weight: bold; box-shadow: 0px 4px 10px rgba(0,0,0,0.5); animation: blinker 0.8s linear infinite;'>
-                    ⚠️ AWAS BAHAYA DI DEPAN! ⚠️<br>
-                    <span style='font-size: 18px; font-weight: normal;'>Sisa {jarak_meter} meter menuju {titik_terdekat['lokasi']}</span><br>
-                    <span style='font-size: 16px; font-weight: normal; font-style: italic;'>"{titik_terdekat['pesan']}"</span>
-                </div>
-                <style>
-                @keyframes blinker {{ 50% {{ opacity: 0; }} }}
-                </style>
-            """, unsafe_allow_html=True)
-            
-            # 3. Audio Keras
-            st.components.v1.html("""<script>var audio = new Audio('https://www.soundjay.com/buttons/beep-01a.mp3'); audio.play();</script>""", height=0)
-        else:
-            st.info(f"Titik rawan terdekat: {titik_terdekat['lokasi']} (Jarak: {jarak_meter}m)")
 
 # ==========================================
 # HALAMAN LOGIN ADMIN
@@ -146,104 +108,113 @@ if st.session_state.halaman == 'Login':
 # HALAMAN HOME
 # ==========================================
 elif st.session_state.halaman == 'Home':
-    st_autorefresh(interval=3000, key="home_refresh") 
     m = folium.Map(location=[-7.049, 110.441], zoom_start=15)
+    
+    # MAGIC: Motor lu bakal tetep gerak mulus karena plugin ini ngebaca GPS langsung dari Browser (bukan Python)
     plugins.LocateControl(auto_start=True, position='bottomright', strings={'title': 'Lokasi Saya', 'popup': 'Anda di sini'}, flyTo=True).add_to(m)
 
     if user_lat and user_lon:
-        cek_dan_bunyikan_alarm(user_lat, user_lon)
-        if len(st.session_state.jejak_motor) > 1:
-            folium.PolyLine(st.session_state.jejak_motor, color='#e67e22', weight=5, opacity=0.8, dash_array='10', tooltip="Jejak Anda").add_to(m)
+        if not df_aktif.empty:
+            df_aktif['jarak'] = df_aktif.apply(lambda row: geodesic((user_lat, user_lon), (row['lat'], row['lon'])).meters, axis=1)
+            titik_terdekat = df_aktif.loc[df_aktif['jarak'].idxmin()]
+            
+            if titik_terdekat['jarak'] < 200:
+                st.error(f"⚠️ BAHAYA: Dekat {titik_terdekat['lokasi']} (Sisa {int(titik_terdekat['jarak'])}m)!")
+            else:
+                st.info(f"Titik terdekat: {titik_terdekat['lokasi']} ({int(titik_terdekat['jarak'])}m)")
 
     for _, p in df_aktif.iterrows():
         folium.Marker([p['lat'], p['lon']], popup=p['lokasi'], tooltip=p['pesan'], icon=folium.Icon(color='red', icon='exclamation-triangle')).add_to(m)
-    
-    if user_lat and user_lon:
-        folium.Marker([user_lat, user_lon], popup="Posisi Motor", icon=folium.Icon(color='blue', icon='motorcycle', prefix='fa')).add_to(m)
-    
     st_folium(m, width=700, height=450, returned_objects=[])
 
 # ==========================================
-# HALAMAN RUTE (LIVE NAVIGASI)
+# HALAMAN RUTE 
 # ==========================================
 elif st.session_state.halaman == 'Rute':
-    st.subheader("📍 Navigasi Rute")
+    st.subheader("📍 Analisis Rute & Alternatif")
     
     if not st.session_state.rute_data:
-        st.info("Ketik lokasi tujuan. Mesin akan mencari Rute Utama & Alternatif.")
+        st.info("Ketik lokasi tujuan. Mesin akan mencari Rute Utama & Alternatif di sekitar Semarang.")
         with st.form("form_cek_rute"):
             tujuan = st.text_input("Mau ke mana? (Contoh: UNDIP Tembalang)")
-            submit_rute = st.form_submit_button("Cari Rute & Mulai Jalan")
+            submit_rute = st.form_submit_button("Analisis Rute")
 
         if submit_rute and tujuan:
             geolocator = ArcGIS() 
-            with st.spinner("Menganalisis tujuan..."):
+            with st.spinner("Menyiapkan rute navigasi..."):
                 try:
                     query_lokasi = f"{tujuan}, Semarang, Jawa Tengah, Indonesia"
                     lokasi_tujuan = geolocator.geocode(query_lokasi)
+                    
                     if lokasi_tujuan:
-                        st.session_state.rute_data = {
-                            'nama_tujuan': lokasi_tujuan.address, 
-                            'dest_lat': lokasi_tujuan.latitude, 
-                            'dest_lon': lokasi_tujuan.longitude
-                        }
-                        st.rerun() 
-                    else: st.error("Lokasi tidak ditemukan. Coba kata kunci lain.")
-                except Exception as e: st.error("Terjadi kesalahan pencarian.")
+                        dest_lat = lokasi_tujuan.latitude
+                        dest_lon = lokasi_tujuan.longitude
+                        start_lat = user_lat if user_lat else -7.049000
+                        start_lon = user_lon if user_lon else 110.441000
+
+                        # Cari maksimal 3 alternatif rute
+                        url = f"http://router.project-osrm.org/route/v1/driving/{start_lon},{start_lat};{dest_lon},{dest_lat}?overview=full&geometries=geojson&alternatives=3"
+                        res = requests.get(url)
+                        
+                        if res.status_code == 200:
+                            semua_rute = res.json().get("routes", [])
+                            rute_list_jadi = []
+                            
+                            for idx, rute in enumerate(semua_rute):
+                                route_coords = rute["geometry"]["coordinates"]
+                                bahaya_dilewati = []
+                                for _, p in df_aktif.iterrows():
+                                    for coord in route_coords:
+                                        if geodesic((p['lat'], p['lon']), (coord[1], coord[0])).meters < 200:
+                                            bahaya_dilewati.append(p.to_dict())
+                                            break 
+                                
+                                rute_list_jadi.append({
+                                    'geojson': rute["geometry"],
+                                    'bahaya': bahaya_dilewati,
+                                    'is_primary': (idx == 0),
+                                    'jarak_km': rute.get('distance', 0) / 1000
+                                })
+
+                            st.session_state.rute_data = {
+                                'nama_tujuan': lokasi_tujuan.address, 
+                                'dest_lat': dest_lat, 
+                                'dest_lon': dest_lon,
+                                'start_lat': start_lat,
+                                'start_lon': start_lon,
+                                'rute_list': rute_list_jadi
+                            }
+                            st.rerun() 
+                        else: st.error("Server OSRM gagal mencari jalan.")
+                    else: st.error("Lokasi tidak ditemukan.")
+                except Exception as e: st.error("Terjadi kesalahan sistem.")
 
     if st.session_state.rute_data:
-        st_autorefresh(interval=3000, key="rute_live") 
         rd = st.session_state.rute_data
-        
         col_info, col_btn = st.columns([3, 1])
         col_info.success(f"Menuju: {rd['nama_tujuan']}")
-        if col_btn.button("🛑 Selesai"): 
-            st.session_state.rute_data = None
-            st.session_state.jejak_motor = []
-            st.rerun()
+        if col_btn.button("🛑 Tutup Peta"): st.session_state.rute_data = None; st.rerun()
 
-        start_lat = user_lat if user_lat else -7.049000
-        start_lon = user_lon if user_lon else 110.441000
+        m_rute = folium.Map(location=[rd['start_lat'], rd['start_lon']], zoom_start=15) 
+        plugins.LocateControl(auto_start=True, position='bottomright', strings={'title': 'Lokasi Saya', 'popup': 'Anda di sini'}, flyTo=True).add_to(m_rute)
 
-        # PANGGIL ALARM RAKSASA JIKA DI MODE NAVIGASI JUGA DEKAT BAHAYA
-        if user_lat and user_lon:
-            cek_dan_bunyikan_alarm(user_lat, user_lon)
+        # Menggambar semua rute
+        for rute in rd['rute_list']:
+            if rute['is_primary']:
+                warna = '#E74C3C' if rute['bahaya'] else '#0078FF' 
+                ketebalan = 7
+                st.write(f"**Rute Utama** ({rute['jarak_km']:.1f} km) - {'⚠️ RAWAN' if rute['bahaya'] else '✅ AMAN'}")
+            else:
+                warna = '#95A5A6' 
+                ketebalan = 5
+                st.write(f"Rute Alternatif ({rute['jarak_km']:.1f} km) - {'⚠️ RAWAN' if rute['bahaya'] else '✅ AMAN'}")
 
-        m_rute = folium.Map(location=[start_lat, start_lon], zoom_start=16) 
-        plugins.LocateControl(auto_start=True, position='bottomright', strings={'title': 'Lokasi', 'popup': 'Anda di sini'}, flyTo=True).add_to(m_rute)
-
-        # Hitung Ulang Rute (Live Routing ke Tujuan) - Termasuk Alternatif
-        url = f"http://router.project-osrm.org/route/v1/driving/{start_lon},{start_lat};{rd['dest_lon']},{rd['dest_lat']}?overview=full&geometries=geojson&alternatives=2"
-        try:
-            res = requests.get(url)
-            if res.status_code == 200:
-                semua_rute = res.json().get("routes", [])
-                for idx, rute in enumerate(semua_rute):
-                    route_coords = rute["geometry"]["coordinates"]
-                    bahaya_dilewati = []
-                    for _, p in df_aktif.iterrows():
-                        for coord in route_coords:
-                            if geodesic((p['lat'], p['lon']), (coord[1], coord[0])).meters < 200:
-                                bahaya_dilewati.append(p.to_dict()); break 
-
-                    is_primary = (idx == 0)
-                    warna = '#0078FF' if is_primary else '#95A5A6'
-                    if bahaya_dilewati and is_primary: warna = '#E74C3C'
-
-                    folium.GeoJson(rute["geometry"], style_function=lambda x, c=warna, w=7 if is_primary else 5: {'color': c, 'weight': w, 'opacity': 0.8}).add_to(m_rute)
-
-                    if is_primary and bahaya_dilewati:
-                        for b in bahaya_dilewati:
-                            folium.Marker([b['lat'], b['lon']], tooltip=b['pesan'], icon=folium.Icon(color='red', icon='exclamation-triangle')).add_to(m_rute)
-        except: pass
-
-        if len(st.session_state.jejak_motor) > 1:
-            folium.PolyLine(st.session_state.jejak_motor, color='#e67e22', weight=5, opacity=0.8, dash_array='10', tooltip="Jejak Anda").add_to(m_rute)
+            folium.GeoJson(rute['geojson'], style_function=lambda x, c=warna, w=ketebalan: {'color': c, 'weight': w, 'opacity': 0.8}).add_to(m_rute)
+            
+            for b in rute['bahaya']: 
+                folium.Marker([b['lat'], b['lon']], tooltip=b['pesan'], icon=folium.Icon(color='red', icon='exclamation-triangle')).add_to(m_rute)
 
         folium.Marker([rd['dest_lat'], rd['dest_lon']], popup=rd['nama_tujuan'], icon=folium.Icon(color='green', icon='flag')).add_to(m_rute)
-        if user_lat and user_lon: 
-            folium.Marker([user_lat, user_lon], popup="Posisi Motor", icon=folium.Icon(color='blue', icon='motorcycle', prefix='fa')).add_to(m_rute)
-            
         st_folium(m_rute, width=700, height=450, returned_objects=[])
 
 # ==========================================
