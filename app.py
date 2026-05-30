@@ -13,8 +13,11 @@ from streamlit_folium import st_folium
 from streamlit_geolocation import streamlit_geolocation
 from geopy.distance import geodesic
 from geopy.geocoders import ArcGIS
+from streamlit_autorefresh import st_autorefresh
 
+# ==========================================
 # 1. PENGATURAN HALAMAN
+# ==========================================
 st.set_page_config(page_title="Safe-Drive", layout="centered", page_icon="🛡️")
 
 hide_st_style = """
@@ -50,11 +53,16 @@ def read_coordinates_from_image(img):
 def load_csv():
     if os.path.exists(FILE_CSV):
         df = pd.read_csv(FILE_CSV)
+        # Proteksi kolom status dan foto
         if 'status' not in df.columns:
             df['status'] = 'approved'
-            df.to_csv(FILE_CSV, index=False)
+        if 'foto' not in df.columns:
+            df['foto'] = None
+            
+        df.to_csv(FILE_CSV, index=False)
         return df
-    else: return pd.DataFrame(columns=['lokasi', 'lat', 'lon', 'pesan', 'status'])
+    else: 
+        return pd.DataFrame(columns=['lokasi', 'lat', 'lon', 'pesan', 'status', 'foto'])
 
 df_bahaya = load_csv()
 df_aktif = df_bahaya[df_bahaya['status'] == 'approved'].copy()
@@ -65,23 +73,35 @@ df_aktif = df_bahaya[df_bahaya['status'] == 'approved'].copy()
 if 'halaman' not in st.session_state: st.session_state.halaman = 'Home'
 if 'rute_data' not in st.session_state: st.session_state.rute_data = None 
 if 'role' not in st.session_state: st.session_state.role = 'User'
+if 'is_navigating' not in st.session_state: st.session_state.is_navigating = False
 
-# HEADER & MENU NAVIGASI
+# ==========================================
+# HEADER & MENU NAVIGASI (DENGAN LOCK)
+# ==========================================
 st.markdown("<h3 style='text-align: center; color: #E74C3C; margin-bottom: 10px;'>🛡️ Safe-Drive</h3>", unsafe_allow_html=True)
 
-col1, col2, col3, col4, col5 = st.columns(5)
-if col1.button("🏠 Home", use_container_width=True): st.session_state.halaman = 'Home'
-if col2.button("🗺️ Rute", use_container_width=True): st.session_state.halaman = 'Rute'
-if col3.button("📂 Data", use_container_width=True): st.session_state.halaman = 'Data'
-if col4.button("➕ Lapor", use_container_width=True): st.session_state.halaman = 'Lapor'
+if not st.session_state.is_navigating:
+    col1, col2, col3, col4, col5 = st.columns(5)
+    if col1.button("🏠 Home", use_container_width=True): st.session_state.halaman = 'Home'
+    if col2.button("🗺️ Rute", use_container_width=True): st.session_state.halaman = 'Rute'
+    if col3.button("📂 Data", use_container_width=True): st.session_state.halaman = 'Data'
+    if col4.button("➕ Lapor", use_container_width=True): st.session_state.halaman = 'Lapor'
 
-if st.session_state.role == 'Admin':
-    if col5.button("🛡️ Admin", use_container_width=True): st.session_state.halaman = 'Admin'
+    if st.session_state.role == 'Admin':
+        if col5.button("🛡️ Admin", use_container_width=True): st.session_state.halaman = 'Admin'
+    else:
+        if col5.button("🔐 Login", use_container_width=True): st.session_state.halaman = 'Login'
+    st.markdown("---")
 else:
-    if col5.button("🔐 Login", use_container_width=True): st.session_state.halaman = 'Login'
-st.markdown("---")
+    st.warning("⚠️ **NAVIGASI SEDANG AKTIF.** Selesaikan perjalanan untuk membuka menu!")
+    if st.button("🛑 SELESAIKAN NAVIGASI"):
+        st.session_state.is_navigating = False
+        st.session_state.rute_data = None
+        st.rerun()
 
+# ==========================================
 # 📡 SENSOR GPS GLOBAL
+# ==========================================
 user_lat, user_lon = None, None
 if st.session_state.halaman in ['Home', 'Lapor', 'Rute']: 
     col_teks, col_gps = st.columns([1, 2])
@@ -186,6 +206,7 @@ if st.session_state.halaman == 'Login':
 # HALAMAN HOME
 # ==========================================
 elif st.session_state.halaman == 'Home':
+    st_autorefresh(interval=3000, key="home_refresh") # Biar motor gerak
     inject_super_alarm() 
     
     m = folium.Map(location=[-7.049, 110.441], zoom_start=15)
@@ -205,8 +226,8 @@ elif st.session_state.halaman == 'Home':
 elif st.session_state.halaman == 'Rute':
     st.subheader("📍 Navigasi Rute Live")
     
-    if not st.session_state.rute_data:
-        st.info("Ketik lokasi tujuan. Rute akan otomatis menghindari atau menandai bahaya.")
+    if not st.session_state.is_navigating:
+        st.info("Ketik lokasi tujuan. Rute akan otomatis memindai bahaya.")
         with st.form("form_cek_rute"):
             tujuan = st.text_input("Mau ke mana? (Contoh: UNDIP Tembalang)")
             submit_rute = st.form_submit_button("Cari Rute & Mulai Jalan")
@@ -226,19 +247,17 @@ elif st.session_state.halaman == 'Rute':
                                 'dest_lat': lokasi_tujuan.latitude, 
                                 'dest_lon': lokasi_tujuan.longitude
                             }
+                            st.session_state.is_navigating = True
                             st.rerun() 
                         else: st.error("Lokasi tidak ditemukan.")
                     except Exception as e: st.error("Terjadi kesalahan sistem pencarian.")
 
-    if st.session_state.rute_data:
+    if st.session_state.is_navigating and st.session_state.rute_data:
+        st_autorefresh(interval=3000, key="rute_refresh") # Biar motor gerak
         inject_super_alarm() 
         
         rd = st.session_state.rute_data
-        col_info, col_btn = st.columns([3, 1])
-        col_info.success(f"Menuju: {rd['nama_tujuan']}")
-        if col_btn.button("🛑 Selesai"): 
-            st.session_state.rute_data = None
-            st.rerun()
+        st.success(f"Menuju: {rd['nama_tujuan']}")
 
         start_lat = user_lat if user_lat else -7.049000
         start_lon = user_lon if user_lon else 110.441000
@@ -251,8 +270,11 @@ elif st.session_state.halaman == 'Rute':
             res = requests.get(url)
             if res.status_code == 200:
                 semua_rute = res.json().get("routes", [])
-                for idx, rute in enumerate(semua_rute):
-                    route_coords = rute["geometry"]["coordinates"]
+                
+                # Cuma ngambil rute utama (index 0)
+                if len(semua_rute) > 0:
+                    rute_utama = semua_rute[0]
+                    route_coords = rute_utama["geometry"]["coordinates"]
                     bahaya_dilewati = []
                     
                     for _, p in df_aktif.iterrows():
@@ -260,19 +282,16 @@ elif st.session_state.halaman == 'Rute':
                             if geodesic((p['lat'], p['lon']), (coord[1], coord[0])).meters < 200:
                                 bahaya_dilewati.append(p.to_dict()); break 
 
-                    is_primary = (idx == 0)
-                    
-                    warna = '#0078FF'
-                    if not is_primary: warna = '#95A5A6'
-                    if bahaya_dilewati and is_primary: warna = '#E74C3C'
+                    # LOGIKA WARNA GARIS MERAH/BIRU
+                    warna = '#E74C3C' if bahaya_dilewati else '#0078FF'
 
-                    folium.GeoJson(rute["geometry"], style_function=lambda x, c=warna, w=7 if is_primary else 5: {'color': c, 'weight': w, 'opacity': 0.8}).add_to(m_rute)
+                    folium.GeoJson(rute_utama["geometry"], style_function=lambda x, c=warna: {'color': c, 'weight': 7, 'opacity': 0.8}).add_to(m_rute)
 
-                    if is_primary and bahaya_dilewati:
+                    if bahaya_dilewati:
                         st.error(f"⚠️ RUTE MENGARAH KE DAERAH RAWAN! (Garis Merah)")
                         for b in bahaya_dilewati:
                             folium.Marker([b['lat'], b['lon']], tooltip=b['pesan'], icon=folium.Icon(color='red', icon='exclamation-triangle')).add_to(m_rute)
-                    elif is_primary and not bahaya_dilewati:
+                    else:
                         st.success("✅ Rute Terpantau Aman! (Garis Biru)")
         except: pass
 
@@ -288,7 +307,7 @@ elif st.session_state.halaman == 'Rute':
 elif st.session_state.halaman == 'Data':
     st.subheader("Database Titik Bahaya Terverifikasi")
     if not df_aktif.empty:
-        df_tampil = df_aktif.drop(columns=['jarak', 'status'], errors='ignore') 
+        df_tampil = df_aktif.drop(columns=['jarak', 'status', 'foto'], errors='ignore') 
         st.dataframe(df_tampil, use_container_width=True)
     else: st.info("Belum ada data titik bahaya yang disetujui.")
 
@@ -314,12 +333,29 @@ elif st.session_state.halaman == 'Lapor':
                     st.text_input("Latitude", value=f"{exif_lat:.6f}", disabled=True)
                     st.text_input("Longitude", value=f"{exif_lon:.6f}", disabled=True)
                     new_pesan = st.text_input("Pesan Peringatan")
+                    
                     if st.form_submit_button("Kirim Laporan"):
                         if new_lok and new_pesan:
-                            data_baru = pd.DataFrame([{"lokasi": new_lok, "lat": exif_lat, "lon": exif_lon, "pesan": new_pesan, "status": "pending"}])
+                            # Bikin folder penyimpanan kalau belum ada
+                            if not os.path.exists("foto_laporan"):
+                                os.makedirs("foto_laporan")
+                            
+                            # Simpan foto fisik
+                            foto_path = f"foto_laporan/{foto_upload.name}"
+                            with open(foto_path, "wb") as f:
+                                f.write(foto_upload.getbuffer())
+
+                            data_baru = pd.DataFrame([{
+                                "lokasi": new_lok, 
+                                "lat": exif_lat, 
+                                "lon": exif_lon, 
+                                "pesan": new_pesan, 
+                                "status": "pending",
+                                "foto": foto_path
+                            }])
                             df_simpan = pd.concat([df_bahaya, data_baru], ignore_index=True)
                             df_simpan.to_csv(FILE_CSV, index=False)
-                            st.success("Laporan berhasil dikirim ke Admin.")
+                            st.success("Laporan beserta foto berhasil dikirim ke Admin.")
             else: 
                 st.error("❌ TEKS TIDAK DITEMUKAN: Pastikan di foto Anda tertulis angka koordinat desimal.")
         except Exception as e: st.error("Gagal menjalankan AI pembaca teks.")
@@ -343,6 +379,10 @@ elif st.session_state.halaman == 'Admin':
                 col_teks, col_acc, col_tolak = st.columns([3, 1, 1])
                 info_text = f"**{row['lokasi']}** | {row['pesan']} [🗺️ Cek Google Maps](https://www.google.com/maps?q={row['lat']},{row['lon']})"
                 col_teks.info(info_text)
+                
+                # Tampilkan foto jika ada
+                if 'foto' in row and pd.notna(row['foto']) and os.path.exists(row['foto']):
+                    col_teks.image(row['foto'], width=250)
                 
                 if col_acc.button("✅", key=f"acc_{index}"):
                     df_bahaya.at[index, 'status'] = 'approved'
