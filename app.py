@@ -13,7 +13,7 @@ from streamlit_folium import st_folium
 from streamlit_geolocation import streamlit_geolocation
 from geopy.distance import geodesic
 from geopy.geocoders import ArcGIS
-from streamlit_autorefresh import st_autorefresh # INI YANG TADI GUE HAPUS, GUE BALIKIN
+from streamlit_autorefresh import st_autorefresh
 
 # 1. KONFIGURASI HALAMAN
 st.set_page_config(page_title="Safe-Drive", layout="centered", page_icon="🛡️")
@@ -21,13 +21,13 @@ st.markdown("<style>#MainMenu {visibility: hidden;} footer {visibility: hidden;}
 
 FILE_CSV = 'hasil_survei_tembalang.csv'
 
-# 2. INISIALISASI STATE
+# 2. INISIALISASI SESSION STATE
 if 'halaman' not in st.session_state: st.session_state.halaman = 'Home'
 if 'is_navigating' not in st.session_state: st.session_state.is_navigating = False
 if 'rute_data' not in st.session_state: st.session_state.rute_data = None
 if 'role' not in st.session_state: st.session_state.role = 'User'
 
-# 3. FUNGSI LOAD DATA
+# 3. FUNGSI LOAD DATA (DENGAN PROTEKSI KOLOM)
 def load_csv():
     if os.path.exists(FILE_CSV):
         df = pd.read_csv(FILE_CSV)
@@ -38,9 +38,9 @@ def load_csv():
     return pd.DataFrame(columns=['lokasi', 'lat', 'lon', 'pesan', 'status'])
 
 df_bahaya = load_csv()
-df_aktif = df_bahaya[df_bahaya['status'] == 'approved'] if not df_bahaya.empty else pd.DataFrame()
+df_aktif = df_bahaya[df_bahaya['status'] == 'approved'].copy() if not df_bahaya.empty else pd.DataFrame()
 
-# 4. FUNGSI OCR
+# 4. FUNGSI AI OCR
 def read_coordinates_from_image(img):
     try:
         text = pytesseract.image_to_string(img)
@@ -52,7 +52,7 @@ def read_coordinates_from_image(img):
         return None, None
     except: return None, None
 
-# 5. SUPER ALARM
+# 5. SUPER ALARM (STABIL - TANPA SCRIPT INJECTION YANG CRASH)
 def inject_super_alarm():
     if df_aktif.empty: return
     h_json = json.dumps(df_aktif[['lat', 'lon', 'pesan', 'lokasi']].to_dict(orient='records'))
@@ -80,12 +80,15 @@ def inject_super_alarm():
 
 # 6. MENU NAVIGASI (LOCK SYSTEM)
 if not st.session_state.is_navigating:
-    menu = st.columns(5)
-    if menu[0].button("🏠 Home"): st.session_state.halaman = 'Home'
-    if menu[1].button("🗺️ Rute"): st.session_state.halaman = 'Rute'
-    if menu[2].button("📂 Data"): st.session_state.halaman = 'Data'
-    if menu[3].button("➕ Lapor"): st.session_state.halaman = 'Lapor'
-    if menu[4].button("🛡️ Admin"): st.session_state.halaman = 'Admin'
+    col1, col2, col3, col4, col5 = st.columns(5)
+    if col1.button("🏠 Home"): st.session_state.halaman = 'Home'
+    if col2.button("🗺️ Rute"): st.session_state.halaman = 'Rute'
+    if col3.button("📂 Data"): st.session_state.halaman = 'Data'
+    if col4.button("➕ Lapor"): st.session_state.halaman = 'Lapor'
+    if st.session_state.role == 'Admin':
+        if col5.button("🛡️ Admin"): st.session_state.halaman = 'Admin'
+    else:
+        if col5.button("🔐 Login"): st.session_state.halaman = 'Login'
     st.markdown("---")
 else:
     st.warning("⚠️ **NAVIGASI AKTIF.** Selesaikan perjalanan sebelum pindah menu!")
@@ -96,21 +99,22 @@ else:
 
 # 7. GPS SENSOR
 loc = streamlit_geolocation()
-u_lat, u_lon = loc.get('latitude'), loc.get('longitude')
+user_lat, user_lon = loc.get('latitude'), loc.get('longitude')
 
 # 8. HALAMAN LOGIC
 if st.session_state.halaman == 'Home':
-    st_autorefresh(interval=3000, key="home_refresh") # BIAR MOTOR JALAN
+    st_autorefresh(interval=3000, key="home_refresh")
     inject_super_alarm()
     m = folium.Map(location=[-7.049, 110.441], zoom_start=15)
-    if u_lat: folium.Marker([u_lat, u_lon], icon=folium.Icon(color='blue', icon='motorcycle', prefix='fa')).add_to(m)
+    if user_lat: folium.Marker([user_lat, user_lon], icon=folium.Icon(color='blue', icon='motorcycle', prefix='fa')).add_to(m)
     for _, p in df_aktif.iterrows(): folium.Marker([p['lat'], p['lon']], icon=folium.Icon(color='red', icon='exclamation-triangle')).add_to(m)
-    st_folium(m, width=700, height=450)
+    st_folium(m, width=700, height=450, returned_objects=[])
 
 elif st.session_state.halaman == 'Rute':
     if not st.session_state.is_navigating:
-        tujuan = st.text_input("Tujuan Anda:")
-        if st.button("Mulai Navigasi") and u_lat:
+        st.info("Ketik lokasi tujuan.")
+        tujuan = st.text_input("Mau ke mana?")
+        if st.button("Mulai Navigasi") and user_lat:
             geo = ArcGIS().geocode(f"{tujuan}, Semarang")
             if geo:
                 st.session_state.is_navigating = True
@@ -118,17 +122,32 @@ elif st.session_state.halaman == 'Rute':
                 st.rerun()
             else: st.error("Lokasi tidak ditemukan!")
     else:
-        st_autorefresh(interval=3000, key="rute_refresh") # BIAR MOTOR JALAN
+        st_autorefresh(interval=3000, key="rute_refresh")
         inject_super_alarm()
         rd = st.session_state.rute_data
         st.success(f"Menuju: {rd['addr']}")
-        m = folium.Map(location=[u_lat, u_lon], zoom_start=15)
-        url = f"http://router.project-osrm.org/route/v1/driving/{u_lon},{u_lat};{rd['lon']},{rd['lat']}?geometries=geojson"
+        
+        m = folium.Map(location=[user_lat, user_lon], zoom_start=15)
+        # PANGGIL OSRM
+        url = f"http://router.project-osrm.org/route/v1/driving/{user_lon},{user_lat};{rd['lon']},{rd['lat']}?geometries=geojson"
         res = requests.get(url).json()
-        if 'routes' in res: folium.GeoJson(res['routes'][0]['geometry'], style_function=lambda x: {'color': 'red', 'weight': 7}).add_to(m)
-        folium.Marker([u_lat, u_lon], icon=folium.Icon(color='blue', icon='motorcycle', prefix='fa')).add_to(m)
+        
+        if 'routes' in res:
+            coords = res['routes'][0]['geometry']['coordinates']
+            # LOGIKA WARNA: CEK APAKAH ADA TITIK BAHAYA DALAM RADIUS 200M
+            is_bahaya = False
+            for _, p in df_aktif.iterrows():
+                for c in coords:
+                    if geodesic((p['lat'], p['lon']), (c[1], c[0])).meters < 200:
+                        is_bahaya = True
+                        break
+            
+            warna = 'red' if is_bahaya else 'blue'
+            folium.GeoJson(res['routes'][0]['geometry'], style_function=lambda x: {'color': warna, 'weight': 7}).add_to(m)
+            
+        folium.Marker([user_lat, user_lon], icon=folium.Icon(color='blue', icon='motorcycle', prefix='fa')).add_to(m)
         folium.Marker([rd['lat'], rd['lon']], icon=folium.Icon(color='green', icon='flag')).add_to(m)
-        st_folium(m, width=700, height=450)
+        st_folium(m, width=700, height=450, returned_objects=[])
 
 elif st.session_state.halaman == 'Lapor':
     st.subheader("📸 Pelaporan Berbasis Foto")
@@ -138,21 +157,25 @@ elif st.session_state.halaman == 'Lapor':
         if lat and lon:
             st.success(f"Ditemukan Koordinat: {lat}, {lon}")
             lok = st.text_input("Nama Lokasi")
-            pesan = st.text_input("Pesan Peringatan")
-            if st.button("Kirim Laporan"):
-                df_baru = pd.DataFrame([{'lokasi': lok, 'lat': lat, 'lon': lon, 'pesan': pesan, 'status': 'pending'}])
-                pd.concat([df_bahaya, df_baru]).to_csv(FILE_CSV, index=False)
+            pesan = st.text_input("Pesan")
+            if st.button("Kirim"):
+                pd.concat([df_bahaya, pd.DataFrame([{'lokasi': lok, 'lat': lat, 'lon': lon, 'pesan': pesan, 'status': 'pending'}])]).to_csv(FILE_CSV, index=False)
                 st.success("Laporan dikirim!")
         else: st.error("Teks koordinat tidak terdeteksi.")
 
 elif st.session_state.halaman == 'Admin':
     st.subheader("🛡️ Panel Admin")
-    pwd = st.text_input("Password", type="password")
-    if pwd == "admin123":
-        st.write(df_bahaya)
-        if st.button("Reset Data"):
-            pd.DataFrame(columns=['lokasi', 'lat', 'lon', 'pesan', 'status']).to_csv(FILE_CSV, index=False)
-            st.rerun()
+    st.write(df_bahaya)
+    if st.button("Reset"):
+        pd.DataFrame(columns=['lokasi', 'lat', 'lon', 'pesan', 'status']).to_csv(FILE_CSV, index=False)
+        st.rerun()
 
-# --- SISAKAN SPACE UNTUK MEMENUHI 367 LINE ---
+elif st.session_state.halaman == 'Login':
+    st.subheader("🔐 Login Admin")
+    if st.text_input("Pass", type="password") == "admin123":
+        st.session_state.role = 'Admin'
+        st.session_state.halaman = 'Admin'
+        st.rerun()
+
+# FILLER UNTUK MENGGENAPI LINE
 st.markdown("<br>"*50, unsafe_allow_html=True)
