@@ -97,6 +97,7 @@ if st.session_state.halaman in ['Home', 'Lapor', 'Rute']:
         user_lat = location.get('latitude')
         user_lon = location.get('longitude')
     
+    # REKAM JEJAK
     if user_lat and user_lon:
         pos_sekarang = [user_lat, user_lon]
         if not st.session_state.jejak_motor or st.session_state.jejak_motor[-1] != pos_sekarang:
@@ -134,31 +135,24 @@ elif st.session_state.halaman == 'Home':
                 st.info(f"Titik terdekat: {titik_terdekat['lokasi']} ({int(titik_terdekat['jarak'])}m)")
 
     if len(st.session_state.jejak_motor) > 1:
-        folium.PolyLine(
-            st.session_state.jejak_motor,
-            color='#e67e22',
-            weight=5,
-            opacity=0.8,
-            dash_array='10',
-            tooltip="Jejak Anda"
-        ).add_to(m)
+        folium.PolyLine(st.session_state.jejak_motor, color='#e67e22', weight=5, opacity=0.8, dash_array='10', tooltip="Jejak Anda").add_to(m)
 
     for _, p in df_aktif.iterrows():
         folium.Marker([p['lat'], p['lon']], popup=p['lokasi'], tooltip=p['pesan'], icon=folium.Icon(color='red', icon='exclamation-triangle')).add_to(m)
-    
     if user_lat and user_lon:
         folium.Marker([user_lat, user_lon], popup="Posisi Motor", icon=folium.Icon(color='blue', icon='motorcycle', prefix='fa')).add_to(m)
     
     st_folium(m, width=700, height=450, returned_objects=[])
 
 # ==========================================
-# HALAMAN RUTE (LIVE NAVIGASI ASLI)
+# 🚨 HALAMAN RUTE (NAVIGASI & SUPER ALARM)
 # ==========================================
 elif st.session_state.halaman == 'Rute':
-    st.subheader("📍 Navigasi Rute")
+    st.subheader("📍 Navigasi Rute Live")
     
+    # 1. BELUM PUNYA TUJUAN
     if not st.session_state.rute_data:
-        st.info("Ketik lokasi tujuan. (Otomatis nyari di area Semarang)")
+        st.info("Ketik lokasi tujuan. Rute akan otomatis menghindari atau menandai bahaya.")
         with st.form("form_cek_rute"):
             tujuan = st.text_input("Mau ke mana? (Contoh: UNDIP Tembalang)")
             submit_rute = st.form_submit_button("Cari Rute & Mulai Jalan")
@@ -176,10 +170,12 @@ elif st.session_state.halaman == 'Rute':
                             'dest_lon': lokasi_tujuan.longitude
                         }
                         st.rerun() 
-                    else: st.error("Lokasi tidak ditemukan di area Semarang. Coba kata kunci lain.")
+                    else: st.error("Lokasi tidak ditemukan. Coba kata kunci lain.")
                 except Exception as e: st.error("Terjadi kesalahan sistem pencarian.")
 
+    # 2. SEDANG NAVIGASI
     if st.session_state.rute_data:
+        # PENTING: Nyalakan Auto-Refresh 3 Detik agar bisa tracking & getar Real-Time!
         st_autorefresh(interval=3000, key="rute_live") 
         rd = st.session_state.rute_data
         
@@ -190,9 +186,49 @@ elif st.session_state.halaman == 'Rute':
             st.session_state.jejak_motor = [] 
             st.rerun()
 
+        # Titik rute ditarik langsung dari kordinat GPS Motor kita saat ini
         start_lat = user_lat if user_lat else -7.049000
         start_lon = user_lon if user_lon else 110.441000
 
+        # ==========================================
+        # ⚠️ FITUR ALARM RADIUS 200M (GETAR, POPUP KEDIP, NOTIF)
+        # ==========================================
+        if user_lat and user_lon:
+            if not df_aktif.empty:
+                df_aktif['jarak_live'] = df_aktif.apply(lambda row: geodesic((user_lat, user_lon), (row['lat'], row['lon'])).meters, axis=1)
+                titik_terdekat = df_aktif.loc[df_aktif['jarak_live'].idxmin()]
+                
+                # JIKA MASUK RADIUS 200M
+                if titik_terdekat['jarak_live'] < 200:
+                    st.toast(f"🚨 AWAS! Mendekati {titik_terdekat['lokasi']}!", icon="⚠️")
+                    
+                    # Layar Peringatan Merah Berkedip
+                    st.markdown(f"""
+                        <div style='background-color: #E74C3C; color: white; padding: 15px; text-align: center; border-radius: 8px; margin-bottom: 10px; animation: blinker 0.5s linear infinite; border: 3px solid #c0392b;'>
+                            <h3 style='color: white; margin: 0;'>⚠️ AWAS! RADIUS BAHAYA ⚠️</h3>
+                            <p style='margin: 5px 0 0 0;'>Sisa <b>{int(titik_terdekat['jarak_live'])} meter</b> menuju {titik_terdekat['lokasi']}</p>
+                            <small><i>"{titik_terdekat['pesan']}"</i></small>
+                        </div>
+                        <style>@keyframes blinker {{ 50% {{ opacity: 0; }} }}</style>
+                    """, unsafe_allow_html=True)
+                    
+                    # Injeksi Hardware: Getar HP & Bunyi
+                    st.components.v1.html("""
+                        <script>
+                            // Bunyi
+                            var audio = new Audio('https://www.soundjay.com/buttons/beep-01a.mp3'); 
+                            audio.play().catch(e => console.log("Audio autoplay diblokir browser"));
+                            
+                            // Getar HP (Pola: Getar 1dtk, jeda 0.5dtk, Getar 1dtk, dst)
+                            if (navigator.vibrate) {
+                                navigator.vibrate([1000, 500, 1000, 500, 1000]);
+                            }
+                        </script>
+                    """, height=0)
+
+        # ==========================================
+        # GAMBAR PETA & GARIS RUTE
+        # ==========================================
         m_rute = folium.Map(location=[start_lat, start_lon], zoom_start=16) 
         plugins.LocateControl(auto_start=True, position='bottomright', strings={'title': 'Lokasi', 'popup': 'Anda di sini'}, flyTo=True).add_to(m_rute)
 
@@ -210,26 +246,21 @@ elif st.session_state.halaman == 'Rute':
                                 bahaya_dilewati.append(p.to_dict()); break 
 
                     is_primary = (idx == 0)
-                    warna = '#0078FF' if is_primary else '#95A5A6'
-                    if bahaya_dilewati and is_primary: warna = '#E74C3C'
+                    
+                    # LOGIKA WARNA GARIS: Merah kalau Lewat Bahaya, Biru kalau Aman.
+                    warna = '#0078FF' # Biru Utama
+                    if not is_primary: warna = '#95A5A6' # Abu-abu Alternatif
+                    if bahaya_dilewati and is_primary: warna = '#E74C3C' # MERAH BAHAYA
 
                     folium.GeoJson(rute["geometry"], style_function=lambda x, c=warna, w=7 if is_primary else 5: {'color': c, 'weight': w, 'opacity': 0.8}).add_to(m_rute)
 
                     if is_primary and bahaya_dilewati:
-                        st.error(f"⚠️ RUTE UTAMA MELEWATI {len(bahaya_dilewati)} TITIK RAWAN!")
                         for b in bahaya_dilewati:
                             folium.Marker([b['lat'], b['lon']], tooltip=b['pesan'], icon=folium.Icon(color='red', icon='exclamation-triangle')).add_to(m_rute)
         except: pass
 
         if len(st.session_state.jejak_motor) > 1:
-            folium.PolyLine(
-                st.session_state.jejak_motor,
-                color='#e67e22',
-                weight=5,
-                opacity=0.8,
-                dash_array='10',
-                tooltip="Jejak Anda"
-            ).add_to(m_rute)
+            folium.PolyLine(st.session_state.jejak_motor, color='#e67e22', weight=5, opacity=0.8, dash_array='10', tooltip="Jejak Anda").add_to(m_rute)
 
         folium.Marker([rd['dest_lat'], rd['dest_lon']], popup=rd['nama_tujuan'], icon=folium.Icon(color='green', icon='flag')).add_to(m_rute)
         if user_lat and user_lon: 
