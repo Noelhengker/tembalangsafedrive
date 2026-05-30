@@ -14,6 +14,7 @@ from streamlit_geolocation import streamlit_geolocation
 from geopy.distance import geodesic
 from geopy.geocoders import ArcGIS
 from streamlit_autorefresh import st_autorefresh
+from supabase import create_client, Client
 
 # ==========================================
 # 1. PENGATURAN HALAMAN
@@ -33,10 +34,34 @@ hide_st_style = """
             """
 st.markdown(hide_st_style, unsafe_allow_html=True)
 
-FILE_CSV = 'hasil_survei_tembalang.csv'
+# ==========================================
+# 2. INISIALISASI SUPABASE (PENGGANTI CSV)
+# ==========================================
+@st.cache_resource
+def init_connection():
+    url = st.secrets["SUPABASE_URL"]
+    key = st.secrets["SUPABASE_KEY"]
+    return create_client(url, key)
+
+try:
+    supabase = init_connection()
+except Exception as e:
+    st.error("⚠️ Koneksi ke Supabase gagal. Pastikan Streamlit Secrets sudah disetting!")
+    st.stop()
+
+def load_data():
+    # Mengambil data langsung dari Supabase
+    response = supabase.table('titik_bahaya').select("*").execute()
+    df = pd.DataFrame(response.data)
+    if df.empty:
+        return pd.DataFrame(columns=['id', 'lokasi', 'lat', 'lon', 'pesan', 'status', 'foto'])
+    return df
+
+df_bahaya = load_data()
+df_aktif = df_bahaya[df_bahaya['status'] == 'approved'].copy() if not df_bahaya.empty else pd.DataFrame()
 
 # ==========================================
-# 🚀 FUNGSI AI PEMBACA TEKS KOORDINAT (OCR)
+# 3. FUNGSI AI PEMBACA TEKS KOORDINAT (OCR)
 # ==========================================
 def read_coordinates_from_image(img):
     try:
@@ -50,25 +75,8 @@ def read_coordinates_from_image(img):
         return None, None
     except: return None, None
 
-def load_csv():
-    if os.path.exists(FILE_CSV):
-        df = pd.read_csv(FILE_CSV)
-        # Proteksi kolom status dan foto
-        if 'status' not in df.columns:
-            df['status'] = 'approved'
-        if 'foto' not in df.columns:
-            df['foto'] = None
-            
-        df.to_csv(FILE_CSV, index=False)
-        return df
-    else: 
-        return pd.DataFrame(columns=['lokasi', 'lat', 'lon', 'pesan', 'status', 'foto'])
-
-df_bahaya = load_csv()
-df_aktif = df_bahaya[df_bahaya['status'] == 'approved'].copy()
-
 # ==========================================
-# INISIALISASI OTAK MEMORI
+# 4. INISIALISASI OTAK MEMORI
 # ==========================================
 if 'halaman' not in st.session_state: st.session_state.halaman = 'Home'
 if 'rute_data' not in st.session_state: st.session_state.rute_data = None 
@@ -76,7 +84,7 @@ if 'role' not in st.session_state: st.session_state.role = 'User'
 if 'is_navigating' not in st.session_state: st.session_state.is_navigating = False
 
 # ==========================================
-# HEADER & MENU NAVIGASI (DENGAN LOCK)
+# 5. HEADER & MENU NAVIGASI (DENGAN LOCK)
 # ==========================================
 st.markdown("<h3 style='text-align: center; color: #E74C3C; margin-bottom: 10px;'>🛡️ Safe-Drive</h3>", unsafe_allow_html=True)
 
@@ -100,7 +108,7 @@ else:
         st.rerun()
 
 # ==========================================
-# 📡 SENSOR GPS GLOBAL
+# 6. SENSOR GPS GLOBAL
 # ==========================================
 user_lat, user_lon = None, None
 if st.session_state.halaman in ['Home', 'Lapor', 'Rute']: 
@@ -112,7 +120,7 @@ if st.session_state.halaman in ['Home', 'Lapor', 'Rute']:
         user_lon = location.get('longitude')
 
 # ==========================================
-# 🌟 JS INJECTION: SUPER ALARM HARDWARE
+# 7. JS INJECTION: SUPER ALARM HARDWARE
 # ==========================================
 def inject_super_alarm():
     if df_aktif.empty: return
@@ -192,7 +200,7 @@ def inject_super_alarm():
     """, height=0, width=0)
 
 # ==========================================
-# HALAMAN LOGIN ADMIN
+# 8. HALAMAN LOGIN ADMIN
 # ==========================================
 if st.session_state.halaman == 'Login':
     st.subheader("🔐 Login Admin")
@@ -203,7 +211,7 @@ if st.session_state.halaman == 'Login':
             st.rerun()
 
 # ==========================================
-# HALAMAN HOME
+# 9. HALAMAN HOME
 # ==========================================
 elif st.session_state.halaman == 'Home':
     st_autorefresh(interval=3000, key="home_refresh") 
@@ -215,14 +223,13 @@ elif st.session_state.halaman == 'Home':
     for _, p in df_aktif.iterrows():
         folium.Marker([p['lat'], p['lon']], popup=p['lokasi'], tooltip=p['pesan'], icon=folium.Icon(color='red', icon='exclamation-triangle')).add_to(m)
     
-    # IKON MOTOR DIHAPUS, DIGANTI PIN BIRU BIASA
     if user_lat and user_lon:
         folium.Marker([user_lat, user_lon], popup="Posisi Anda", icon=folium.Icon(color='blue')).add_to(m)
     
     st_folium(m, width=700, height=450, returned_objects=[])
 
 # ==========================================
-# HALAMAN RUTE
+# 10. HALAMAN RUTE
 # ==========================================
 elif st.session_state.halaman == 'Rute':
     st.subheader("📍 Navigasi Rute Live")
@@ -297,14 +304,13 @@ elif st.session_state.halaman == 'Rute':
 
         folium.Marker([rd['dest_lat'], rd['dest_lon']], popup=rd['nama_tujuan'], icon=folium.Icon(color='green', icon='flag')).add_to(m_rute)
         
-        # IKON MOTOR DIHAPUS, DIGANTI PIN BIRU BIASA
         if user_lat and user_lon: 
             folium.Marker([user_lat, user_lon], popup="Posisi Anda", icon=folium.Icon(color='blue')).add_to(m_rute)
             
         st_folium(m_rute, width=700, height=450, returned_objects=[])
 
 # ==========================================
-# HALAMAN DATA
+# 11. HALAMAN DATA
 # ==========================================
 elif st.session_state.halaman == 'Data':
     st.subheader("Database Titik Bahaya Terverifikasi")
@@ -314,7 +320,7 @@ elif st.session_state.halaman == 'Data':
     else: st.info("Belum ada data titik bahaya yang disetujui.")
 
 # ==========================================
-# HALAMAN LAPOR 
+# 12. HALAMAN LAPOR 
 # ==========================================
 elif st.session_state.halaman == 'Lapor':
     st.subheader("📸 Pelaporan Berbasis Teks Koordinat Foto")
@@ -338,6 +344,7 @@ elif st.session_state.halaman == 'Lapor':
                     
                     if st.form_submit_button("Kirim Laporan"):
                         if new_lok and new_pesan:
+                            # Simpan foto fisik lokal
                             if not os.path.exists("foto_laporan"):
                                 os.makedirs("foto_laporan")
                             
@@ -345,23 +352,23 @@ elif st.session_state.halaman == 'Lapor':
                             with open(foto_path, "wb") as f:
                                 f.write(foto_upload.getbuffer())
 
-                            data_baru = pd.DataFrame([{
+                            # Insert data ke Supabase
+                            data_baru = {
                                 "lokasi": new_lok, 
                                 "lat": exif_lat, 
                                 "lon": exif_lon, 
                                 "pesan": new_pesan, 
                                 "status": "pending",
                                 "foto": foto_path
-                            }])
-                            df_simpan = pd.concat([df_bahaya, data_baru], ignore_index=True)
-                            df_simpan.to_csv(FILE_CSV, index=False)
+                            }
+                            supabase.table('titik_bahaya').insert(data_baru).execute()
                             st.success("Laporan beserta foto berhasil dikirim ke Admin.")
             else: 
                 st.error("❌ TEKS TIDAK DITEMUKAN: Pastikan di foto Anda tertulis angka koordinat desimal.")
         except Exception as e: st.error("Gagal menjalankan AI pembaca teks.")
 
 # ==========================================
-# 🛡️ HALAMAN KHUSUS ADMIN
+# 13. HALAMAN KHUSUS ADMIN
 # ==========================================
 elif st.session_state.halaman == 'Admin':
     if st.session_state.role != 'Admin': st.error("Anda tidak memiliki akses.")
@@ -383,22 +390,27 @@ elif st.session_state.halaman == 'Admin':
                 if 'foto' in row and pd.notna(row['foto']) and os.path.exists(row['foto']):
                     col_teks.image(row['foto'], width=250)
                 
-                if col_acc.button("✅", key=f"acc_{index}"):
-                    df_bahaya.at[index, 'status'] = 'approved'
-                    df_bahaya.to_csv(FILE_CSV, index=False)
+                # Menggunakan ID dari Supabase untuk update/delete
+                row_id = int(row['id'])
+                
+                if col_acc.button("✅", key=f"acc_{row_id}"):
+                    supabase.table('titik_bahaya').update({"status": "approved"}).eq("id", row_id).execute()
                     st.rerun()
-                if col_tolak.button("❌", key=f"tolak_{index}"):
-                    df_bahaya = df_bahaya.drop(index)
-                    df_bahaya.to_csv(FILE_CSV, index=False)
+                if col_tolak.button("❌", key=f"tolak_{row_id}"):
+                    supabase.table('titik_bahaya').delete().eq("id", row_id).execute()
                     st.rerun()
         else: st.success("Aman! Tidak ada laporan pending.")
 
         st.markdown("#### 🗑️ Hapus Titik")
         if not df_aktif.empty:
             with st.form("form_hapus_admin"):
-                pilihan_aktif = df_aktif.apply(lambda x: f"{x['lokasi']}", axis=1)
-                pilih_hapus_str = st.selectbox("Pilih lokasi yang mau dihapus:", pilihan_aktif)
+                # Bikin dictionary buat nyocokin nama lokasi dengan ID-nya
+                pilihan_aktif = df_aktif.set_index('id')['lokasi'].to_dict()
+                
+                # User milih nama lokasi, tapi yang kita pake sebagai value adalah ID-nya
+                pilih_id = st.selectbox("Pilih lokasi yang mau dihapus:", options=list(pilihan_aktif.keys()), format_func=lambda x: pilihan_aktif[x])
+                
                 if st.form_submit_button("Cabut Titik"):
-                    df_bahaya = df_bahaya[df_bahaya['lokasi'] != pilih_hapus_str]
-                    df_bahaya.to_csv(FILE_CSV, index=False)
+                    supabase.table('titik_bahaya').delete().eq("id", pilih_id).execute()
                     st.success("Titik dicabut dari peta!")
+                    st.rerun()
