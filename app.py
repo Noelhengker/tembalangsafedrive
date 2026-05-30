@@ -298,8 +298,35 @@ elif st.session_state.halaman == 'Data':
 # ==========================================
 # HALAMAN LAPOR 
 # ==========================================
+# ==========================================
+# HALAMAN LAPOR 
+# ==========================================
 elif st.session_state.halaman == 'Lapor':
     st.subheader("📸 Pelaporan Berbasis Teks Koordinat Foto")
     st.warning("Gunakan aplikasi kamera GPS. Mesin akan membaca teks koordinat yang tertulis di foto!")
     
-    foto_
+    # NAH INI YANG KEPOTONG JADI foto_ DOANG BANG
+    foto_upload = st.file_uploader("Pilih File Foto Kejadian", type=['jpg', 'jpeg', 'png'])
+    
+    if foto_upload is not None:
+        try:
+            img = Image.open(foto_upload)
+            with st.spinner("AI sedang membaca teks koordinat di foto Anda..."):
+                exif_lat, exif_lon = read_coordinates_from_image(img)
+            
+            if exif_lat and exif_lon:
+                st.success(f"✅ AI Berhasil membaca teks! (Lat: {exif_lat:.5f}, Lon: {exif_lon:.5f})")
+                with st.form("form_tambah_geotag"):
+                    new_lok = st.text_input("Nama Lokasi")
+                    st.text_input("Latitude", value=f"{exif_lat:.6f}", disabled=True)
+                    st.text_input("Longitude", value=f"{exif_lon:.6f}", disabled=True)
+                    new_pesan = st.text_input("Pesan Peringatan")
+                    if st.form_submit_button("Kirim Laporan"):
+                        if new_lok and new_pesan:
+                            data_baru = pd.DataFrame([{"lokasi": new_lok, "lat": exif_lat, "lon": exif_lon, "pesan": new_pesan, "status": "pending"}])
+                            df_simpan = pd.concat([df_bahaya, data_baru], ignore_index=True)
+                            df_simpan.to_csv(FILE_CSV, index=False)
+                            st.success("Laporan berhasil dikirim ke Admin.")
+            else: 
+                st.error("❌ TEKS TIDAK DITEMUKAN: Pastikan di foto Anda tertulis angka koordinat desimal.")
+        except Exception as e: st.error("Gagal menjalankan AI pembaca teks.")
