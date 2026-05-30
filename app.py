@@ -50,16 +50,16 @@ except Exception as e:
     st.stop()
 
 def load_data():
-    # Mengambil data langsung dari Supabase
-    response = supabase.table('titik_bahaya').select("*").execute()
-    df = pd.DataFrame(response.data)
-    if df.empty:
+    try:
+        response = supabase.table('titik_bahaya').select("*").execute()
+        df = pd.DataFrame(response.data)
+        if df.empty:
+            return pd.DataFrame(columns=['id', 'lokasi', 'lat', 'lon', 'pesan', 'status', 'foto'])
+        return df
+    except Exception as e:
+        # INI BUAT NAMPILIN ERROR ASLINYA KE LAYAR LU
+        st.error(f"⚠️ Error dari Supabase: {str(e)}")
         return pd.DataFrame(columns=['id', 'lokasi', 'lat', 'lon', 'pesan', 'status', 'foto'])
-    return df
-
-df_bahaya = load_data()
-df_aktif = df_bahaya[df_bahaya['status'] == 'approved'].copy() if not df_bahaya.empty else pd.DataFrame()
-
 # ==========================================
 # 3. FUNGSI AI PEMBACA TEKS KOORDINAT (OCR)
 # ==========================================
