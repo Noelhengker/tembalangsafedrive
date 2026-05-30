@@ -81,7 +81,7 @@ else:
     if col5.button("🔐 Login", use_container_width=True): st.session_state.halaman = 'Login'
 st.markdown("---")
 
-# 📡 SENSOR GPS GLOBAL (Buat kunci posisi awal)
+# 📡 SENSOR GPS GLOBAL
 user_lat, user_lon = None, None
 if st.session_state.halaman in ['Home', 'Lapor', 'Rute']: 
     col_teks, col_gps = st.columns([1, 2])
@@ -92,19 +92,20 @@ if st.session_state.halaman in ['Home', 'Lapor', 'Rute']:
         user_lon = location.get('longitude')
 
 # ==========================================
-# 🌟 JS INJECTION: SUPER ALARM HARDWARE (Jalan di Background Tanpa Kedip)
+# 🌟 JS INJECTION: SUPER ALARM HARDWARE (KODE YANG SUDAH DIPERBAIKI!)
 # ==========================================
 def inject_super_alarm():
     if df_aktif.empty: return
-    # Ubah data bahaya ke JSON biar bisa dibaca Javascript
+    # Ubah data bahaya ke format JSON yang aman
     hazards_json = json.dumps(df_aktif[['lat', 'lon', 'pesan', 'lokasi']].to_dict(orient='records'))
     
+    # PERHATIAN: Semua kurung kurawal CSS/JS sudah digandakan ({{ }}) agar tidak crash!
     components.html(f"""
         <script>
         const hazards = {hazards_json};
         
         function getDistance(lat1, lon1, lat2, lon2) {{
-            const R = 6371000; // Radius Bumi dalam meter
+            const R = 6371000; 
             const dLat = (lat2-lat1) * (Math.PI/180);
             const dLon = (lon2-lon1) * (Math.PI/180);
             const a = Math.sin(dLat/2) * Math.sin(dLat/2) + Math.cos(lat1*(Math.PI/180)) * Math.cos(lat2*(Math.PI/180)) * Math.sin(dLon/2) * Math.sin(dLon/2);
@@ -113,7 +114,7 @@ def inject_super_alarm():
 
         let alarmActive = false;
         let overlayDiv = null;
-        const parentDoc = window.parent.document; // Akses layar utama web Streamlit
+        const parentDoc = window.parent.document; 
 
         if (navigator.geolocation) {{
             navigator.geolocation.watchPosition(
@@ -128,7 +129,7 @@ def inject_super_alarm():
 
                     for(let i=0; i<hazards.length; i++) {{
                         const dist = getDistance(uLat, uLon, hazards[i].lat, hazards[i].lon);
-                        if(dist < 200) {{ // RADIUS 200 METER
+                        if(dist < 200) {{ 
                             nearHazard = true;
                             msg = hazards[i].pesan;
                             locName = hazards[i].lokasi;
@@ -140,24 +141,21 @@ def inject_super_alarm():
                     if (nearHazard && !alarmActive) {{
                         alarmActive = true;
                         
-                        // 1. GETAR HP!
                         if(navigator.vibrate) navigator.vibrate([1000, 500, 1000, 500, 1000]);
                         
-                        // 2. SUARA BEEP!
                         const audio = new Audio('https://www.soundjay.com/buttons/beep-01a.mp3');
-                        audio.play().catch(e=>console.log(e));
+                        audio.play().catch(e=>console.log("Audio diblokir browser"));
                         
-                        // 3. LAYAR MERAH KEDAP-KEDIP NUTUPIN WEB!
                         overlayDiv = parentDoc.createElement('div');
                         overlayDiv.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;background-color:rgba(231,76,60,0.95);z-index:999999;display:flex;flex-direction:column;align-items:center;justify-content:center;color:white;text-align:center;pointer-events:none;';
-                        overlayDiv.innerHTML = `
-                            <h1 style="font-size:3rem;margin:0;animation:blinker 0.4s linear infinite;">⚠️ AWAS BAHAYA ⚠️</h1>
-                            <h2 style="margin:10px 0;">Sisa ${sisaJarak} m ke ${locName}</h2>
-                            <p style="font-size:1.5rem;font-style:italic;">"${msg}"</p>
-                        `;
+                        
+                        // Cara aman menggabungkan variabel tanpa bikin Python error
+                        overlayDiv.innerHTML = '<h1 style="font-size:3rem;margin:0;animation:blinker 0.4s linear infinite;">⚠️ AWAS BAHAYA ⚠️</h1>' +
+                                               '<h2 style="margin:10px 0;">Sisa ' + sisaJarak + ' m ke ' + locName + '</h2>' +
+                                               '<p style="font-size:1.5rem;font-style:italic;">"' + msg + '"</p>';
                         
                         let style = parentDoc.createElement('style');
-                        style.innerHTML = '@keyframes blinker { 50% { opacity: 0; } }';
+                        style.innerHTML = '@keyframes blinker {{ 50% {{ opacity: 0; }} }}';
                         overlayDiv.appendChild(style);
                         parentDoc.body.appendChild(overlayDiv);
 
@@ -170,7 +168,7 @@ def inject_super_alarm():
                     }}
                 }},
                 function(err) {{ console.log(err); }},
-                {{enableHighAccuracy: true, maximumAge: 2000, timeout: 5000}} // Update cepat tiap detik
+                {{enableHighAccuracy: true, maximumAge: 2000, timeout: 5000}} 
             );
         }}
         </script>
@@ -191,7 +189,7 @@ if st.session_state.halaman == 'Login':
 # HALAMAN HOME
 # ==========================================
 elif st.session_state.halaman == 'Home':
-    inject_super_alarm() # Nyalakan JS Background
+    inject_super_alarm() 
     
     m = folium.Map(location=[-7.049, 110.441], zoom_start=15)
     plugins.LocateControl(auto_start=True, position='bottomright', strings={'title': 'Lokasi Saya', 'popup': 'Anda di sini'}, flyTo=True).add_to(m)
@@ -205,7 +203,7 @@ elif st.session_state.halaman == 'Home':
     st_folium(m, width=700, height=450, returned_objects=[])
 
 # ==========================================
-# HALAMAN RUTE (NAVIGASI GARIS MERAH MULUS)
+# HALAMAN RUTE
 # ==========================================
 elif st.session_state.halaman == 'Rute':
     st.subheader("📍 Navigasi Rute Live")
@@ -236,7 +234,6 @@ elif st.session_state.halaman == 'Rute':
                     except Exception as e: st.error("Terjadi kesalahan sistem pencarian.")
 
     if st.session_state.rute_data:
-        # NYALAKAN SENSOR JS BACKGROUND (Mulus, Gak Kedip)
         inject_super_alarm() 
         
         rd = st.session_state.rute_data
@@ -246,14 +243,12 @@ elif st.session_state.halaman == 'Rute':
             st.session_state.rute_data = None
             st.rerun()
 
-        # Mulai gambar peta
         start_lat = user_lat if user_lat else -7.049000
         start_lon = user_lon if user_lon else 110.441000
 
         m_rute = folium.Map(location=[start_lat, start_lon], zoom_start=15) 
         plugins.LocateControl(auto_start=True, position='bottomright', strings={'title': 'Lokasi', 'popup': 'Anda di sini'}, flyTo=True).add_to(m_rute)
 
-        # Gambar Rute Lurus dari Motor ke Tujuan
         url = f"http://router.project-osrm.org/route/v1/driving/{start_lon},{start_lat};{rd['dest_lon']},{rd['dest_lat']}?overview=full&geometries=geojson&alternatives=2"
         try:
             res = requests.get(url)
@@ -270,8 +265,6 @@ elif st.session_state.halaman == 'Rute':
 
                     is_primary = (idx == 0)
                     
-                    # LOGIKA WARNA GARIS: 
-                    # Merah = Bahaya! | Biru = Aman | Abu-abu = Rute Alternatif
                     warna = '#0078FF'
                     if not is_primary: warna = '#95A5A6'
                     if bahaya_dilewati and is_primary: warna = '#E74C3C'
@@ -309,67 +302,4 @@ elif st.session_state.halaman == 'Lapor':
     st.subheader("📸 Pelaporan Berbasis Teks Koordinat Foto")
     st.warning("Gunakan aplikasi kamera GPS. Mesin akan membaca teks koordinat yang tertulis di foto!")
     
-    foto_upload = st.file_uploader("Pilih File Foto Kejadian", type=['jpg', 'jpeg', 'png'])
-    
-    if foto_upload is not None:
-        try:
-            img = Image.open(foto_upload)
-            with st.spinner("AI sedang membaca teks koordinat di foto Anda..."):
-                exif_lat, exif_lon = read_coordinates_from_image(img)
-            
-            if exif_lat and exif_lon:
-                st.success(f"✅ AI Berhasil membaca teks! (Lat: {exif_lat:.5f}, Lon: {exif_lon:.5f})")
-                with st.form("form_tambah_geotag"):
-                    new_lok = st.text_input("Nama Lokasi")
-                    st.text_input("Latitude", value=f"{exif_lat:.6f}", disabled=True)
-                    st.text_input("Longitude", value=f"{exif_lon:.6f}", disabled=True)
-                    new_pesan = st.text_input("Pesan Peringatan")
-                    if st.form_submit_button("Kirim Laporan"):
-                        if new_lok and new_pesan:
-                            data_baru = pd.DataFrame([{"lokasi": new_lok, "lat": exif_lat, "lon": exif_lon, "pesan": new_pesan, "status": "pending"}])
-                            df_simpan = pd.concat([df_bahaya, data_baru], ignore_index=True)
-                            df_simpan.to_csv(FILE_CSV, index=False)
-                            st.success("Laporan berhasil dikirim ke Admin.")
-            else: 
-                st.error("❌ TEKS TIDAK DITEMUKAN: Pastikan di foto Anda tertulis angka koordinat desimal.")
-        except Exception as e: st.error("Gagal menjalankan AI pembaca teks.")
-
-# ==========================================
-# 🛡️ HALAMAN KHUSUS ADMIN
-# ==========================================
-elif st.session_state.halaman == 'Admin':
-    if st.session_state.role != 'Admin': st.error("Anda tidak memiliki akses.")
-    else:
-        col_judul, col_logout = st.columns([3, 1])
-        col_judul.subheader("🛡️ Panel Admin")
-        if col_logout.button("🚪 Logout"):
-            st.session_state.role, st.session_state.halaman = 'User', 'Home'
-            st.rerun()
-
-        st.markdown("#### ⏳ Laporan Menunggu")
-        df_pending = df_bahaya[df_bahaya['status'] == 'pending']
-        if not df_pending.empty:
-            for index, row in df_pending.iterrows():
-                col_teks, col_acc, col_tolak = st.columns([3, 1, 1])
-                info_text = f"**{row['lokasi']}** | {row['pesan']} [🗺️ Cek Google Maps](https://www.google.com/maps?q={row['lat']},{row['lon']})"
-                col_teks.info(info_text)
-                
-                if col_acc.button("✅", key=f"acc_{index}"):
-                    df_bahaya.at[index, 'status'] = 'approved'
-                    df_bahaya.to_csv(FILE_CSV, index=False)
-                    st.rerun()
-                if col_tolak.button("❌", key=f"tolak_{index}"):
-                    df_bahaya = df_bahaya.drop(index)
-                    df_bahaya.to_csv(FILE_CSV, index=False)
-                    st.rerun()
-        else: st.success("Aman! Tidak ada laporan pending.")
-
-        st.markdown("#### 🗑️ Hapus Titik")
-        if not df_aktif.empty:
-            with st.form("form_hapus_admin"):
-                pilihan_aktif = df_aktif.apply(lambda x: f"{x['lokasi']}", axis=1)
-                pilih_hapus_str = st.selectbox("Pilih lokasi yang mau dihapus:", pilihan_aktif)
-                if st.form_submit_button("Cabut Titik"):
-                    df_bahaya = df_bahaya[df_bahaya['lokasi'] != pilih_hapus_str]
-                    df_bahaya.to_csv(FILE_CSV, index=False)
-                    st.success("Titik dicabut dari peta!")
+    foto_
