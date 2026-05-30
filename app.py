@@ -92,12 +92,13 @@ if st.session_state.halaman in ['Home', 'Lapor', 'Rute']:
         user_lon = location.get('longitude')
 
 # ==========================================
-# 🌟 JS INJECTION: SUPER ALARM HARDWARE
+# 🌟 JS INJECTION: SUPER ALARM HARDWARE (FIXED)
 # ==========================================
 def inject_super_alarm():
     if df_aktif.empty: return
     hazards_json = json.dumps(df_aktif[['lat', 'lon', 'pesan', 'lokasi']].to_dict(orient='records'))
     
+    # PERHATIKAN double kurung kurawal {{ }} untuk CSS biar Python nggak crash
     components.html(f"""
         <script>
         const hazards = {hazards_json};
@@ -142,7 +143,7 @@ def inject_super_alarm():
                         if(navigator.vibrate) navigator.vibrate([1000, 500, 1000, 500, 1000]);
                         
                         const audio = new Audio('https://www.soundjay.com/buttons/beep-01a.mp3');
-                        audio.play().catch(e=>console.log("Audio diblokir browser"));
+                        audio.play().catch(e=>console.log("Audio diblokir"));
                         
                         overlayDiv = parentDoc.createElement('div');
                         overlayDiv.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;background-color:rgba(231,76,60,0.95);z-index:999999;display:flex;flex-direction:column;align-items:center;justify-content:center;color:white;text-align:center;pointer-events:none;';
