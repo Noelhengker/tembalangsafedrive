@@ -57,10 +57,12 @@ def load_data():
             return pd.DataFrame(columns=['id', 'lokasi', 'lat', 'lon', 'pesan', 'status', 'foto'])
         return df
     except Exception as e:
-        # INI BUAT NAMPILIN ERROR ASLINYA KE LAYAR LU
         st.error(f"⚠️ Error dari Supabase: {str(e)}")
         return pd.DataFrame(columns=['id', 'lokasi', 'lat', 'lon', 'pesan', 'status', 'foto'])
-# ==========================================
+
+# DUA BARIS INI WAJIB ADA DI SINI BIAR NGGAK NAMEERROR:
+df_bahaya = load_data()
+df_aktif = df_bahaya[df_bahaya['status'] == 'approved'].copy() if not df_bahaya.empty else pd.DataFrame()# ==========================================
 # 3. FUNGSI AI PEMBACA TEKS KOORDINAT (OCR)
 # ==========================================
 def read_coordinates_from_image(img):
