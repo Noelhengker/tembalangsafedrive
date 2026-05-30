@@ -81,6 +81,77 @@ else:
     if col5.button("🔐 Login", use_container_width=True): st.session_state.halaman = 'Login'
 st.markdown("---")
 
+if not st.session_state.is_navigating:
+    menu = st.columns(5)
+    if menu[0].button("🏠 Home"): st.session_state.halaman = 'Home'
+    if menu[1].button("🗺️ Rute"): st.session_state.halaman = 'Rute'
+    if menu[2].button("📂 Data"): st.session_state.halaman = 'Data'
+    if menu[3].button("➕ Lapor"): st.session_state.halaman = 'Lapor'
+    if menu[4].button("🛡️ Admin"): st.session_state.halaman = 'Admin'
+    st.markdown("---")
+else:
+    st.warning("⚠️ **NAVIGASI AKTIF.** Selesaikan perjalanan sebelum pindah halaman!")
+    if st.button("🛑 SELESAIKAN NAVIGASI"):
+        st.session_state.is_navigating = False
+        st.session_state.rute_data = None
+        st.rerun()
+
+# 3. GPS SENSOR
+loc = streamlit_geolocation()
+u_lat, u_lon = loc.get('latitude'), loc.get('longitude')
+
+# ALARM LOGIC (STABIL)
+if u_lat and u_lon and not df_aktif.empty:
+    for _, row in df_aktif.iterrows():
+        dist = geodesic((u_lat, u_lon), (row['lat'], row['lon'])).meters
+        if dist < 200:
+            st.error(f"🚨 BAHAYA: {row['lokasi']} (Jarak: {int(dist)}m)")
+
+# 4. HALAMAN LOGIC
+if st.session_state.halaman == 'Home':
+    m = folium.Map(location=[-7.049, 110.441], zoom_start=15)
+    if u_lat: folium.Marker([u_lat, u_lon], icon=folium.Icon(color='blue', icon='motorcycle', prefix='fa')).add_to(m)
+    for _, p in df_aktif.iterrows(): folium.Marker([p['lat'], p['lon']], icon=folium.Icon(color='red', icon='exclamation-triangle')).add_to(m)
+    st_folium(m, width=700, height=450)
+
+elif st.session_state.halaman == 'Rute':
+    if not st.session_state.is_navigating:
+        tujuan = st.text_input("Tujuan Anda:")
+        if st.button("Mulai Navigasi") and u_lat:
+            geo = ArcGIS().geocode(f"{tujuan}, Semarang")
+            if geo:
+                st.session_state.is_navigating = True
+                st.session_state.rute_data = {'lat': geo.latitude, 'lon': geo.longitude, 'addr': geo.address}
+                st.rerun()
+            else: st.error("Lokasi tidak ditemukan!")
+    else:
+        # TAMPILAN SAAT NAVIGASI BERJALAN
+        rd = st.session_state.rute_data
+        m = folium.Map(location=[u_lat, u_lon], zoom_start=15)
+        # Garis Merah dari posisi lu ke tujuan
+        url = f"http://router.project-osrm.org/route/v1/driving/{u_lon},{u_lat};{rd['lon']},{rd['lat']}?geometries=geojson"
+        res = requests.get(url).json()
+        if 'routes' in res:
+            folium.GeoJson(res['routes'][0]['geometry'], style_function=lambda x: {'color': 'red', 'weight': 7}).add_to(m)
+        folium.Marker([u_lat, u_lon], icon=folium.Icon(color='blue', icon='motorcycle', prefix='fa')).add_to(m)
+        folium.Marker([rd['lat'], rd['lon']], icon=folium.Icon(color='green', icon='flag')).add_to(m)
+        st_folium(m, width=700, height=450)
+
+elif st.session_state.halaman == 'Lapor':
+    st.subheader("📸 Pelaporan Foto")
+    foto = st.file_uploader("Upload Foto", type=['jpg', 'png'])
+    if foto: 
+        text = pytesseract.image_to_string(Image.open(foto))
+        st.write(text) # Debug tampilkan teks yang terbaca
+
+elif st.session_state.halaman == 'Admin':
+    st.subheader("🛡️ Panel Admin")
+    if st.text_input("Password", type="password") == "admin123":
+        st.write(df_bahaya)
+        if st.button("Reset Data"):
+            pd.DataFrame(columns=['lokasi', 'lat', 'lon', 'pesan', 'status']).to_csv(FILE_CSV, index=False)
+            st.rerun()
+
 # 📡 SENSOR GPS GLOBAL
 user_lat, user_lon = None, None
 if st.session_state.halaman in ['Home', 'Lapor', 'Rute']: 
