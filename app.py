@@ -206,7 +206,7 @@ if st.session_state.halaman == 'Login':
 # HALAMAN HOME
 # ==========================================
 elif st.session_state.halaman == 'Home':
-    st_autorefresh(interval=3000, key="home_refresh") # Biar motor gerak
+    st_autorefresh(interval=3000, key="home_refresh") 
     inject_super_alarm() 
     
     m = folium.Map(location=[-7.049, 110.441], zoom_start=15)
@@ -215,8 +215,9 @@ elif st.session_state.halaman == 'Home':
     for _, p in df_aktif.iterrows():
         folium.Marker([p['lat'], p['lon']], popup=p['lokasi'], tooltip=p['pesan'], icon=folium.Icon(color='red', icon='exclamation-triangle')).add_to(m)
     
+    # IKON MOTOR DIHAPUS, DIGANTI PIN BIRU BIASA
     if user_lat and user_lon:
-        folium.Marker([user_lat, user_lon], popup="Posisi Motor", icon=folium.Icon(color='blue', icon='motorcycle', prefix='fa')).add_to(m)
+        folium.Marker([user_lat, user_lon], popup="Posisi Anda", icon=folium.Icon(color='blue')).add_to(m)
     
     st_folium(m, width=700, height=450, returned_objects=[])
 
@@ -253,7 +254,7 @@ elif st.session_state.halaman == 'Rute':
                     except Exception as e: st.error("Terjadi kesalahan sistem pencarian.")
 
     if st.session_state.is_navigating and st.session_state.rute_data:
-        st_autorefresh(interval=3000, key="rute_refresh") # Biar motor gerak
+        st_autorefresh(interval=3000, key="rute_refresh") 
         inject_super_alarm() 
         
         rd = st.session_state.rute_data
@@ -271,7 +272,6 @@ elif st.session_state.halaman == 'Rute':
             if res.status_code == 200:
                 semua_rute = res.json().get("routes", [])
                 
-                # Cuma ngambil rute utama (index 0)
                 if len(semua_rute) > 0:
                     rute_utama = semua_rute[0]
                     route_coords = rute_utama["geometry"]["coordinates"]
@@ -282,7 +282,7 @@ elif st.session_state.halaman == 'Rute':
                             if geodesic((p['lat'], p['lon']), (coord[1], coord[0])).meters < 200:
                                 bahaya_dilewati.append(p.to_dict()); break 
 
-                    # LOGIKA WARNA GARIS MERAH/BIRU
+                    # LOGIKA WARNA GARIS
                     warna = '#E74C3C' if bahaya_dilewati else '#0078FF'
 
                     folium.GeoJson(rute_utama["geometry"], style_function=lambda x, c=warna: {'color': c, 'weight': 7, 'opacity': 0.8}).add_to(m_rute)
@@ -296,8 +296,10 @@ elif st.session_state.halaman == 'Rute':
         except: pass
 
         folium.Marker([rd['dest_lat'], rd['dest_lon']], popup=rd['nama_tujuan'], icon=folium.Icon(color='green', icon='flag')).add_to(m_rute)
+        
+        # IKON MOTOR DIHAPUS, DIGANTI PIN BIRU BIASA
         if user_lat and user_lon: 
-            folium.Marker([user_lat, user_lon], popup="Posisi Anda", icon=folium.Icon(color='blue', icon='motorcycle', prefix='fa')).add_to(m_rute)
+            folium.Marker([user_lat, user_lon], popup="Posisi Anda", icon=folium.Icon(color='blue')).add_to(m_rute)
             
         st_folium(m_rute, width=700, height=450, returned_objects=[])
 
@@ -336,11 +338,9 @@ elif st.session_state.halaman == 'Lapor':
                     
                     if st.form_submit_button("Kirim Laporan"):
                         if new_lok and new_pesan:
-                            # Bikin folder penyimpanan kalau belum ada
                             if not os.path.exists("foto_laporan"):
                                 os.makedirs("foto_laporan")
                             
-                            # Simpan foto fisik
                             foto_path = f"foto_laporan/{foto_upload.name}"
                             with open(foto_path, "wb") as f:
                                 f.write(foto_upload.getbuffer())
@@ -380,7 +380,6 @@ elif st.session_state.halaman == 'Admin':
                 info_text = f"**{row['lokasi']}** | {row['pesan']} [🗺️ Cek Google Maps](https://www.google.com/maps?q={row['lat']},{row['lon']})"
                 col_teks.info(info_text)
                 
-                # Tampilkan foto jika ada
                 if 'foto' in row and pd.notna(row['foto']) and os.path.exists(row['foto']):
                     col_teks.image(row['foto'], width=250)
                 
