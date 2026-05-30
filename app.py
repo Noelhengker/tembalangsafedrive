@@ -14,7 +14,6 @@ from streamlit_geolocation import streamlit_geolocation
 from geopy.distance import geodesic
 from geopy.geocoders import ArcGIS
 from streamlit_autorefresh import st_autorefresh
-from supabase import create_client, Client
 
 # ==========================================
 # 1. PENGATURAN HALAMAN
@@ -34,35 +33,29 @@ hide_st_style = """
             """
 st.markdown(hide_st_style, unsafe_allow_html=True)
 
-# ==========================================
-# 2. INISIALISASI SUPABASE (PENGGANTI CSV)
-# ==========================================
-@st.cache_resource
-def init_connection():
-    url = st.secrets["SUPABASE_URL"]
-    key = st.secrets["SUPABASE_KEY"]
-    return create_client(url, key)
+FILE_CSV = 'hasil_survei_tembalang.csv'
 
-try:
-    supabase = init_connection()
-except Exception as e:
-    st.error("⚠️ Koneksi ke Supabase gagal. Pastikan Streamlit Secrets sudah disetting!")
-    st.stop()
-
-def load_data():
-    try:
-        response = supabase.table('titik_bahaya').select("*").execute()
-        df = pd.DataFrame(response.data)
-        if df.empty:
-            return pd.DataFrame(columns=['id', 'lokasi', 'lat', 'lon', 'pesan', 'status', 'foto'])
+# ==========================================
+# 2. FUNGSI LOAD DATA CSV (BALIK KE CSV)
+# ==========================================
+def load_csv():
+    if os.path.exists(FILE_CSV):
+        df = pd.read_csv(FILE_CSV)
+        # Proteksi kolom status dan foto
+        if 'status' not in df.columns:
+            df['status'] = 'approved'
+        if 'foto' not in df.columns:
+            df['foto'] = None
+            
+        df.to_csv(FILE_CSV, index=False)
         return df
-    except Exception as e:
-        st.error(f"⚠️ Error dari Supabase: {str(e)}")
-        return pd.DataFrame(columns=['id', 'lokasi', 'lat', 'lon', 'pesan', 'status', 'foto'])
+    else: 
+        return pd.DataFrame(columns=['lokasi', 'lat', 'lon', 'pesan', 'status', 'foto'])
 
-# DUA BARIS INI WAJIB ADA DI SINI BIAR NGGAK NAMEERROR:
-df_bahaya = load_data()
-df_aktif = df_bahaya[df_bahaya['status'] == 'approved'].copy() if not df_bahaya.empty else pd.DataFrame()# ==========================================
+df_bahaya = load_csv()
+df_aktif = df_bahaya[df_bahaya['status'] == 'approved'].copy() if not df_bahaya.empty else pd.DataFrame()
+
+# ==========================================
 # 3. FUNGSI AI PEMBACA TEKS KOORDINAT (OCR)
 # ==========================================
 def read_coordinates_from_image(img):
@@ -354,16 +347,17 @@ elif st.session_state.halaman == 'Lapor':
                             with open(foto_path, "wb") as f:
                                 f.write(foto_upload.getbuffer())
 
-                            # Insert data ke Supabase
-                            data_baru = {
+                            # Insert data ke DataFrame & Save ke CSV
+                            data_baru = pd.DataFrame([{
                                 "lokasi": new_lok, 
                                 "lat": exif_lat, 
                                 "lon": exif_lon, 
                                 "pesan": new_pesan, 
                                 "status": "pending",
                                 "foto": foto_path
-                            }
-                            supabase.table('titik_bahaya').insert(data_baru).execute()
+                            }])
+                            df_simpan = pd.concat([df_bahaya, data_baru], ignore_index=True)
+                            df_simpan.to_csv(FILE_CSV, index=False)
                             st.success("Laporan beserta foto berhasil dikirim ke Admin.")
             else: 
                 st.error("❌ TEKS TIDAK DITEMUKAN: Pastikan di foto Anda tertulis angka koordinat desimal.")
@@ -389,30 +383,27 @@ elif st.session_state.halaman == 'Admin':
                 info_text = f"**{row['lokasi']}** | {row['pesan']} [🗺️ Cek Google Maps](https://www.google.com/maps?q={row['lat']},{row['lon']})"
                 col_teks.info(info_text)
                 
+                # Nampilin foto pelapor
                 if 'foto' in row and pd.notna(row['foto']) and os.path.exists(row['foto']):
                     col_teks.image(row['foto'], width=250)
                 
-                # Menggunakan ID dari Supabase untuk update/delete
-                row_id = int(row['id'])
-                
-                if col_acc.button("✅", key=f"acc_{row_id}"):
-                    supabase.table('titik_bahaya').update({"status": "approved"}).eq("id", row_id).execute()
+                if col_acc.button("✅", key=f"acc_{index}"):
+                    df_bahaya.at[index, 'status'] = 'approved'
+                    df_bahaya.to_csv(FILE_CSV, index=False)
                     st.rerun()
-                if col_tolak.button("❌", key=f"tolak_{row_id}"):
-                    supabase.table('titik_bahaya').delete().eq("id", row_id).execute()
+                if col_tolak.button("❌", key=f"tolak_{index}"):
+                    df_bahaya = df_bahaya.drop(index)
+                    df_bahaya.to_csv(FILE_CSV, index=False)
                     st.rerun()
         else: st.success("Aman! Tidak ada laporan pending.")
 
         st.markdown("#### 🗑️ Hapus Titik")
         if not df_aktif.empty:
             with st.form("form_hapus_admin"):
-                # Bikin dictionary buat nyocokin nama lokasi dengan ID-nya
-                pilihan_aktif = df_aktif.set_index('id')['lokasi'].to_dict()
-                
-                # User milih nama lokasi, tapi yang kita pake sebagai value adalah ID-nya
-                pilih_id = st.selectbox("Pilih lokasi yang mau dihapus:", options=list(pilihan_aktif.keys()), format_func=lambda x: pilihan_aktif[x])
-                
+                pilihan_aktif = df_aktif.apply(lambda x: f"{x['lokasi']}", axis=1)
+                pilih_hapus_str = st.selectbox("Pilih lokasi yang mau dihapus:", pilihan_aktif)
                 if st.form_submit_button("Cabut Titik"):
-                    supabase.table('titik_bahaya').delete().eq("id", pilih_id).execute()
+                    df_bahaya = df_bahaya[df_bahaya['lokasi'] != pilih_hapus_str]
+                    df_bahaya.to_csv(FILE_CSV, index=False)
                     st.success("Titik dicabut dari peta!")
                     st.rerun()
