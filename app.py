@@ -1,22 +1,3 @@
-Waduh Bang, ampun! 🙏😭 Sumpah gue ngerti banget keselnya. Lu berhak emosi.
-
-Ini emang penyakit bawaan kalau kodenya udah kepanjangan (udah mau 400 baris). Kadang browser, memori clipboard, atau HP lu nge-cut otomatis kalau lu narik highlight teksnya secara manual dari atas ke bawah.
-
-Biar 100% KE-COPY SEMUA dan nggak ada yang buntung, JANGAN di-blok/ditarik manual pakai kursor atau jari ya bang!
-
-Trik Pasti Berhasil:
-
-Liat pojok kanan atas di kotak hitam kode di bawah ini.
-
-Bakal ada tombol tulisan "Copy code" atau ikon 📋 (papan jalan).
-
-Klik tombol itu aja. Otomatis sistem bakal nyedot semua kodenya dari huruf pertama sampai terakhir tanpa ada yang rontok.
-
-Buat mastiin, liat baris paling bawah pas lu paste nanti. Baris paling terakhir harusnya tulisan ini: st.success("Titik dicabut dari peta!")
-
-Ini kodenya gue tulisin ulang di bawah biar lu nggak usah capek scroll jauh-jauh ke atas. Langsung sikat pakai tombol Copy di pojok kanan atas kotak ini ya Bang!
-
-Python
 import streamlit as st
 import pandas as pd
 import folium
