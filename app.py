@@ -15,9 +15,6 @@ from geopy.distance import geodesic
 from geopy.geocoders import ArcGIS
 from streamlit_autorefresh import st_autorefresh
 
-# ==========================================
-# 1. PENGATURAN HALAMAN
-# ==========================================
 st.set_page_config(page_title="Safe-Drive", layout="centered", page_icon="🛡️")
 
 hide_st_style = """
@@ -35,13 +32,10 @@ st.markdown(hide_st_style, unsafe_allow_html=True)
 
 FILE_CSV = 'hasil_survei_tembalang.csv'
 
-# ==========================================
-# 2. FUNGSI LOAD DATA CSV (BALIK KE CSV)
-# ==========================================
 def load_csv():
     if os.path.exists(FILE_CSV):
         df = pd.read_csv(FILE_CSV)
-        # Proteksi kolom status dan foto
+       
         if 'status' not in df.columns:
             df['status'] = 'approved'
         if 'foto' not in df.columns:
@@ -55,9 +49,6 @@ def load_csv():
 df_bahaya = load_csv()
 df_aktif = df_bahaya[df_bahaya['status'] == 'approved'].copy() if not df_bahaya.empty else pd.DataFrame()
 
-# ==========================================
-# 3. FUNGSI AI PEMBACA TEKS KOORDINAT (OCR)
-# ==========================================
 def read_coordinates_from_image(img):
     try:
         text = pytesseract.image_to_string(img)
@@ -70,17 +61,11 @@ def read_coordinates_from_image(img):
         return None, None
     except: return None, None
 
-# ==========================================
-# 4. INISIALISASI OTAK MEMORI
-# ==========================================
 if 'halaman' not in st.session_state: st.session_state.halaman = 'Home'
 if 'rute_data' not in st.session_state: st.session_state.rute_data = None 
 if 'role' not in st.session_state: st.session_state.role = 'User'
 if 'is_navigating' not in st.session_state: st.session_state.is_navigating = False
 
-# ==========================================
-# 5. HEADER & MENU NAVIGASI (DENGAN LOCK)
-# ==========================================
 st.markdown("<h3 style='text-align: center; color: #E74C3C; margin-bottom: 10px;'>🛡️ Safe-Drive</h3>", unsafe_allow_html=True)
 
 if not st.session_state.is_navigating:
@@ -102,9 +87,6 @@ else:
         st.session_state.rute_data = None
         st.rerun()
 
-# ==========================================
-# 6. SENSOR GPS GLOBAL
-# ==========================================
 user_lat, user_lon = None, None
 if st.session_state.halaman in ['Home', 'Lapor', 'Rute']: 
     col_teks, col_gps = st.columns([1, 2])
@@ -114,9 +96,6 @@ if st.session_state.halaman in ['Home', 'Lapor', 'Rute']:
         user_lat = location.get('latitude')
         user_lon = location.get('longitude')
 
-# ==========================================
-# 7. JS INJECTION: SUPER ALARM HARDWARE
-# ==========================================
 def inject_super_alarm():
     if df_aktif.empty: return
     hazards_json = json.dumps(df_aktif[['lat', 'lon', 'pesan', 'lokasi']].to_dict(orient='records'))
@@ -194,9 +173,6 @@ def inject_super_alarm():
         </script>
     """, height=0, width=0)
 
-# ==========================================
-# 8. HALAMAN LOGIN ADMIN
-# ==========================================
 if st.session_state.halaman == 'Login':
     st.subheader("🔐 Login Admin")
     with st.form("form_login"):
@@ -205,9 +181,6 @@ if st.session_state.halaman == 'Login':
             st.session_state.role, st.session_state.halaman = 'Admin', 'Admin'
             st.rerun()
 
-# ==========================================
-# 9. HALAMAN HOME
-# ==========================================
 elif st.session_state.halaman == 'Home':
     st_autorefresh(interval=3000, key="home_refresh") 
     inject_super_alarm() 
@@ -223,9 +196,6 @@ elif st.session_state.halaman == 'Home':
     
     st_folium(m, width=700, height=450, returned_objects=[])
 
-# ==========================================
-# 10. HALAMAN RUTE
-# ==========================================
 elif st.session_state.halaman == 'Rute':
     st.subheader("📍 Navigasi Rute Live")
     
@@ -304,9 +274,6 @@ elif st.session_state.halaman == 'Rute':
             
         st_folium(m_rute, width=700, height=450, returned_objects=[])
 
-# ==========================================
-# 11. HALAMAN DATA
-# ==========================================
 elif st.session_state.halaman == 'Data':
     st.subheader("Database Titik Bahaya Terverifikasi")
     if not df_aktif.empty:
@@ -314,9 +281,6 @@ elif st.session_state.halaman == 'Data':
         st.dataframe(df_tampil, use_container_width=True)
     else: st.info("Belum ada data titik bahaya yang disetujui.")
 
-# ==========================================
-# 12. HALAMAN LAPOR 
-# ==========================================
 elif st.session_state.halaman == 'Lapor':
     st.subheader("📸 Pelaporan Berbasis Teks Koordinat Foto")
     st.warning("Gunakan aplikasi kamera GPS. Mesin akan membaca teks koordinat yang tertulis di foto!")
@@ -339,7 +303,7 @@ elif st.session_state.halaman == 'Lapor':
                     
                     if st.form_submit_button("Kirim Laporan"):
                         if new_lok and new_pesan:
-                            # Simpan foto fisik lokal
+                            
                             if not os.path.exists("foto_laporan"):
                                 os.makedirs("foto_laporan")
                             
@@ -347,7 +311,7 @@ elif st.session_state.halaman == 'Lapor':
                             with open(foto_path, "wb") as f:
                                 f.write(foto_upload.getbuffer())
 
-                            # Insert data ke DataFrame & Save ke CSV
+                            
                             data_baru = pd.DataFrame([{
                                 "lokasi": new_lok, 
                                 "lat": exif_lat, 
@@ -363,9 +327,6 @@ elif st.session_state.halaman == 'Lapor':
                 st.error("❌ TEKS TIDAK DITEMUKAN: Pastikan di foto Anda tertulis angka koordinat desimal.")
         except Exception as e: st.error("Gagal menjalankan AI pembaca teks.")
 
-# ==========================================
-# 13. HALAMAN KHUSUS ADMIN
-# ==========================================
 elif st.session_state.halaman == 'Admin':
     if st.session_state.role != 'Admin': st.error("Anda tidak memiliki akses.")
     else:
@@ -383,7 +344,7 @@ elif st.session_state.halaman == 'Admin':
                 info_text = f"**{row['lokasi']}** | {row['pesan']} [🗺️ Cek Google Maps](https://www.google.com/maps?q={row['lat']},{row['lon']})"
                 col_teks.info(info_text)
                 
-                # Nampilin foto pelapor
+                
                 if 'foto' in row and pd.notna(row['foto']) and os.path.exists(row['foto']):
                     col_teks.image(row['foto'], width=250)
                 
