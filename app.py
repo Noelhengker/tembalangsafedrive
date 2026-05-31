@@ -147,15 +147,22 @@ def inject_super_alarm():
                         audio.play().catch(e=>console.log("Audio diblokir browser"));
                         
                         overlayDiv = parentDoc.createElement('div');
-                        overlayDiv.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;background-color:rgba(231,76,60,0.95);z-index:999999;display:flex;flex-direction:column;align-items:center;justify-content:center;color:white;text-align:center;pointer-events:none;';
+                        overlayDiv.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;background-color:rgba(231,76,60,0.95);z-index:999999;display:flex;flex-direction:column;align-items:center;justify-content:center;color:white;text-align:center;cursor:pointer;';
                         
                         overlayDiv.innerHTML = '<h1 style="font-size:3rem;margin:0;animation:blinker 0.4s linear infinite;">⚠️ AWAS BAHAYA ⚠️</h1>' +
                                                '<h2 style="margin:10px 0;">Sisa ' + sisaJarak + ' m ke ' + locName + '</h2>' +
-                                               '<p style="font-size:1.5rem;font-style:italic;">"' + msg + '"</p>';
+                                               '<p style="font-size:1.5rem;font-style:italic;margin-bottom:30px;">"' + msg + '"</p>' +
+                                               '<p style="font-size:1rem; border: 2px solid white; padding: 10px 20px; border-radius: 10px;">👇 Ketuk layar untuk menutup peringatan 👇</p>';
                         
                         let style = parentDoc.createElement('style');
                         style.innerHTML = '@keyframes blinker {{ 50% {{ opacity: 0; }} }}';
                         overlayDiv.appendChild(style);
+                        
+                        // FITUR BARU: Klik layar buat nutup warning
+                        overlayDiv.onclick = function() {{
+                            this.style.display = 'none';
+                        }};
+
                         parentDoc.body.appendChild(overlayDiv);
 
                     }} else if (!nearHazard && alarmActive) {{
@@ -172,7 +179,7 @@ def inject_super_alarm():
         }}
         </script>
     """, height=0, width=0)
-
+            
 if st.session_state.halaman == 'Login':
     st.subheader("🔐 Login Admin")
     with st.form("form_login"):
